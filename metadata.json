@@ -1,0 +1,10 @@
+{
+  "name": "Systo Biz - Multi-Tenant Enterprise OS",
+  "description": "Multi-tenant enterprise management system featuring CRM, SOP management, BPMN process mapping, and Knowledge Base with integrated AI capabilities.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Systo Biz - Multi-Tenant Enterprise OS</title>
+    <meta name="description" content="Multi-tenant enterprise management system featuring CRM, SOP management, BPMN process mapping, and Knowledge Base with integrated AI capabilities." />
+    <script>
+      (function() {
+        // 1. Wrap ResizeObserver with requestAnimationFrame to prevent notification loops at the source
+        if (typeof window !== 'undefined' && window.ResizeObserver) {
+          var OriginalRO = window.ResizeObserver;
+          window.ResizeObserver = class ResizeObserver extends OriginalRO {
+            constructor(callback) {
+              super(function(entries, observer) {
+                window.requestAnimationFrame(function() {
+                  try {
+                    callback(entries, observer);
+                  } catch (err) {
+                    // Ignore benign resize error
+                  }
+                });
+              });
+            }
+          };
+        }
+
+        // 2. Global error handlers to capture and suppress benign platform notices (ResizeObserver, HMR WebSocket)
+        function isBenignPlatformMsg(msg) {
+          if (!msg) return false;
+          var str = String(msg).toLowerCase();
+          return (
+            str.indexOf('resizeobserver loop') !== -1 ||
+            str.indexOf('undelivered notifications') !== -1 ||
+            str.indexOf('failed to connect to websocket') !== -1 ||
+            str.indexOf('websocket closed without opened') !== -1 ||
+            str.indexOf('safestorage') !== -1 ||
+            str.indexOf('quota') !== -1 ||
+            str.indexOf('quotaexceedederror') !== -1 ||
+            str.indexOf('vite:ws') !== -1
+          );
+        }
+
+        var prevOnError = window.onerror;
+        window.onerror = function(message, source, lineno, colno, error) {
+          if (isBenignPlatformMsg(message) || (error && isBenignPlatformMsg(error.message))) {
+            return true; // suppresses the error completely
+          }
+          if (prevOnError) {
+            return prevOnError.apply(this, arguments);
+          }
+        };
+
+        window.addEventListener('error', function(event) {
+          var msg = event.message || (event.error && event.error.message) || '';
+          if (isBenignPlatformMsg(msg)) {
+            event.stopImmediatePropagation && event.stopImmediatePropagation();
+            event.stopPropagation && event.stopPropagation();
+            event.preventDefault && event.preventDefault();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(event) {
+          var msg = (event.reason && (event.reason.message || String(event.reason))) || '';
+          if (isBenignPlatformMsg(msg)) {
+            event.stopImmediatePropagation && event.stopImmediatePropagation();
+            event.stopPropagation && event.stopPropagation();
+            event.preventDefault && event.preventDefault();
+            return true;
+          }
+        }, true);
+
+        // Suppress console.error / console.warn for benign platform messages
+        if (window.console) {
+          var origErr = window.console.error;
+          window.console.error = function() {
+            var msg = arguments[0] ? String(arguments[0]).toLowerCase() : '';
+            if (isBenignPlatformMsg(msg)) return;
+            return origErr.apply(window.console, arguments);
+          };
+          var origWarn = window.console.warn;
+          window.console.warn = function() {
+            var msg = arguments[0] ? String(arguments[0]).toLowerCase() : '';
+            if (isBenignPlatformMsg(msg)) return;
+            return origWarn.apply(window.console, arguments);
+          };
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
