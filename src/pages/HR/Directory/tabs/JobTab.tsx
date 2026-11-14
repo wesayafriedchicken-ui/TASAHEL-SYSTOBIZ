@@ -11,6 +11,7 @@ import { EmployeeProfileOutletContext } from "./types";
 import { Employee, Shift } from "../../../../types";
 import { cn } from "../../../../lib/utils";
 import { PermittedField } from "../../../../components/common/PermittedField";
+import { PermittedField } from "../../../../components/Common/PermittedField";
 import { DynamicLayoutSection } from "../../../../components/HR/DynamicLayoutSection";
 import { CustomAddableSelect } from "../../../../components/Common/CustomAddableSelect";
 import { 
