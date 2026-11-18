@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config({ override: true });
+dotenv.config();
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { pool } from '../db/schema.js';
 
