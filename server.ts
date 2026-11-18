@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-dotenv.config({ override: true });
+dotenv.config();
 import express, { Request, Response, NextFunction } from "express";
 import { createServer as createViteServer } from "vite";
 import http from "http";
@@ -38,7 +38,7 @@ import meetingsRoutes from "./server/modules/meetings/meetings.routes.js";
 import storageRoutes from "./server/modules/storage/storage.routes.js";
 import mobileRoutes from "./server/modules/mobile/mobile.routes.js";
 import { createZktecoAdmsRouter } from "./server/modules/hr/zkteco.routes.js";
-import { pool, isDatabaseAvailable } from "./server/db/schema.js";
+import { pool, isDatabaseAvailable, getDbType, getDatabaseAvailable, getLastDbError } from "./server/db/schema.js";
 import { automationService } from "./server/services/automation.service.js";
 import { NotificationService } from "./server/services/notification.service.js";
 import { IntegrationService } from "./server/services/integration.service.js";
@@ -261,12 +261,26 @@ async function startServer() {
   });
 
   // API Routes
-  app.get("/api/health", (req, res) => {
-    res.json({ 
-      status: "connected", 
-      database: isDatabaseAvailable ? "PostgreSQL/Supabase" : "sandbox", 
-      message: isDatabaseAvailable ? "Database connected" : "Database in offline sandbox mode. Local-first storage active.", 
-      time: new Date().toISOString() 
+  app.get("/api/health", async (req, res) => {
+    const dialect = getDbType();
+    const dbLabel = dialect === "mysql" ? "MySQL/MariaDB" : "PostgreSQL/Supabase";
+    let dbConnected = false;
+    try {
+      const checkRes = await pool.query("SELECT 1 as ok");
+      dbConnected = Boolean(checkRes && Array.isArray(checkRes.rows) && checkRes.rows.length > 0 && getDatabaseAvailable());
+    } catch (_e) {
+      dbConnected = false;
+    }
+    const lastError = getLastDbError();
+    res.json({
+      status: dbConnected ? "connected" : "disconnected",
+      dbConnected,
+      dialect,
+      database: dbConnected ? dbLabel : "sandbox",
+      targetDatabase: dbLabel,
+      error: dbConnected ? null : (lastError || (dialect === "mysql" ? "MySQL connection unavailable" : "PostgreSQL/Supabase connection unavailable")),
+      message: dbConnected ? `Database connected (${dbLabel})` : `Database disconnected (${dbLabel}).`,
+      time: new Date().toISOString()
     });
   });
 
