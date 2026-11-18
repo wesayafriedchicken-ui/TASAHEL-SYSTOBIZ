@@ -1,5 +1,33 @@
 import { Request, Response } from "express";
-import { pool } from "../../db/schema.js";
+import { pool, getDbType } from "../../db/schema.js";
+
+async function hydrateReactionsForMessages(messages: any[]) {
+  if (!messages || messages.length === 0) return messages;
+  const msgIds = messages.map((m) => m.id).filter(Boolean);
+  if (msgIds.length === 0) return messages;
+  const placeholders = msgIds.map((_, i) => `$${i + 1}`).join(", ");
+  const rxRes = await pool.query(
+    `SELECT message_id, emoji, user_id FROM chat_message_reactions WHERE message_id IN (${placeholders})`,
+    msgIds
+  );
+  const byMsg = new Map<number, Map<string, number[]>>();
+  for (const r of rxRes.rows) {
+    if (!byMsg.has(r.message_id)) byMsg.set(r.message_id, new Map());
+    const emMap = byMsg.get(r.message_id)!;
+    if (!emMap.has(r.emoji)) emMap.set(r.emoji, []);
+    emMap.get(r.emoji)!.push(r.user_id);
+  }
+  return messages.map((m) => {
+    const emMap = byMsg.get(m.id);
+    if (!emMap) return { ...m, reactions: null };
+    const reactions = Array.from(emMap.entries()).map(([emoji, user_ids]) => ({
+      emoji,
+      count: user_ids.length,
+      user_ids
+    }));
+    return { ...m, reactions };
+  });
+}
 
 export const getRooms = async (req: Request, res: Response) => {
   const { user_id } = req.query;
@@ -126,6 +154,25 @@ export const getMessages = async (req: Request, res: Response) => {
     params.push(Number(limit) || 30);
     params.push(Number(offset) || 0);
 
+    if (getDbType() === 'mysql') {
+      const mysqlQuery = `
+        SELECT cm.*,
+               u.name as sender_name,
+               u.email as sender_email,
+               (SELECT COUNT(*) FROM chat_messages WHERE parent_id = cm.id) as reply_count,
+               (SELECT MAX(created_at) FROM chat_messages WHERE parent_id = cm.id) as last_reply_at
+        FROM chat_messages cm
+        JOIN chat_rooms cr ON cm.room_id = cr.id
+        LEFT JOIN users u ON cm.sender_id = u.id
+        WHERE ${whereClause}
+        ORDER BY cm.created_at DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}
+      `;
+      const result = await pool.query(mysqlQuery, params);
+      const hydrated = await hydrateReactionsForMessages(result.rows);
+      return res.json(hydrated.reverse());
+    }
+
     const query = `
       SELECT cm.*, 
              u.name as sender_name, 
@@ -227,6 +274,32 @@ export const sendMessage = async (req: Request, res: Response) => {
 export const getThreadReplies = async (req: Request, res: Response) => {
   const { messageId } = req.params;
   try {
+    if (getDbType() === 'mysql') {
+      const parentRes = await pool.query(`
+        SELECT cm.*, u.name as sender_name, u.email as sender_email,
+               (SELECT COUNT(*) FROM chat_messages WHERE parent_id = cm.id) as reply_count
+        FROM chat_messages cm
+        LEFT JOIN users u ON cm.sender_id = u.id
+        WHERE cm.id = $1
+      `, [messageId]);
+
+      if (parentRes.rows.length === 0) {
+        return res.status(404).json({ error: "Message not found" });
+      }
+
+      const repliesRes = await pool.query(`
+        SELECT cm.*, u.name as sender_name, u.email as sender_email
+        FROM chat_messages cm
+        LEFT JOIN users u ON cm.sender_id = u.id
+        WHERE cm.parent_id = $1
+        ORDER BY cm.created_at ASC
+      `, [messageId]);
+
+      const [parentHydrated] = await hydrateReactionsForMessages(parentRes.rows);
+      const repliesHydrated = await hydrateReactionsForMessages(repliesRes.rows);
+      return res.json({ parent: parentHydrated, replies: repliesHydrated });
+    }
+
     // Get parent message
     const parentRes = await pool.query(`
       SELECT cm.*, u.name as sender_name, u.email as sender_email,
@@ -298,6 +371,11 @@ export const toggleReaction = async (req: Request, res: Response) => {
         "INSERT INTO chat_message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
         [messageId, userId, emoji]
       );
+    }
+
+    if (getDbType() === 'mysql') {
+      const [hydrated] = await hydrateReactionsForMessages([{ id: Number(messageId) }]);
+      return res.json({ messageId: Number(messageId), reactions: hydrated?.reactions || [] });
     }
 
     // Fetch updated reactions

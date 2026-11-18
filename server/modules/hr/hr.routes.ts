@@ -1,5 +1,5 @@
 import express from "express";
-import { pool } from "../../db/schema.js";
+import { pool, getDbType } from "../../db/schema.js";
 import { IntegrationService } from "../../services/integration.service.js";
 import { automationService } from "../../services/automation.service.js";
 import { logAction } from "../../services/auditLogger.js";
@@ -160,6 +160,184 @@ export default function hrRoutes(wss: any) {
       }
 
       const whereClause = whereConditions.join(" AND ");
+
+      if (getDbType() === 'mysql') {
+        const mysqlQuery = `
+          SELECT 
+            u.id,
+            u.name,
+            u.email,
+            COALESCE(h.work_email, u.email, '') as work_email,
+            COALESCE(u.job_title, h.job_title, '') as job_title,
+            u.department_id,
+            COALESCE(d.name, '') as department_name,
+            COALESCE(d.name, '') as department,
+            COALESCE(h.mobile_phone, h.phone, '') as mobile_phone,
+            COALESCE(u.status, 'active') as status,
+            COALESCE(h.salary_base, 0) as salary_base,
+            COALESCE(h.allowances, 0) as allowances,
+            COALESCE(h.contract_start_date, DATE(h.joined_at), DATE(u.created_at)) as hire_date,
+            COALESCE(b.total_bonuses, 0) as total_bonuses,
+            COALESCE(s.total_shift_allowances, 0) as shift_allowances,
+            COALESCE(eq.total_equities, 0) as equities,
+            COALESCE(ast.assets_count, 0) as assets_count,
+            COALESCE(pen.penalty_count, 0) as penalty_count,
+            COALESCE(trn.trainings_completed, 0) as trainings_completed,
+            h.assets_list,
+            h.penalty_history,
+            h.trainings_list,
+            COALESCE(h.employee_id, h.id_number, '') as employee_id,
+            COALESCE(h.id_number, '') as id_number,
+            COALESCE(h.first_name, '') as first_name,
+            COALESCE(h.middle_name, '') as middle_name,
+            COALESCE(h.last_name, '') as last_name,
+            COALESCE(h.preferred_name, '') as preferred_name,
+            COALESCE(h.contract_type, 'Full-time') as contract_type,
+            h.contract_start_date,
+            h.contract_end_date,
+            COALESCE(h.vacation_balance, 21) as vacation_balance,
+            COALESCE(h.sick_leave_balance, 7) as sick_leave_balance,
+            COALESCE(h.bereavement_used, 0) as bereavement_used,
+            COALESCE(h.attendance_method, 'Login System') as attendance_method,
+            COALESCE(h.team_name, u.team_name, '') as team_name,
+            COALESCE(h.manager_name, '') as manager_name,
+            COALESCE(h.gender, '') as gender,
+            COALESCE(h.nationality, '') as nationality,
+            COALESCE(h.marital_status, '') as marital_status,
+            h.date_of_birth,
+            COALESCE(h.address, '') as address,
+            COALESCE(h.street_1, '') as street_1,
+            COALESCE(h.street_2, '') as street_2,
+            COALESCE(h.city, '') as city,
+            COALESCE(h.county, '') as county,
+            COALESCE(h.country, '') as country,
+            COALESCE(h.postcode, '') as postcode,
+            COALESCE(h.work_location, '') as work_location,
+            COALESCE(h.job_grade, '') as job_grade,
+            COALESCE(h.national_id, '') as national_id,
+            COALESCE(h.passport_number, '') as passport_number,
+            COALESCE(h.shirt_size, '') as shirt_size,
+            COALESCE(h.bank_name, '') as bank_name,
+            COALESCE(h.account_number, '') as account_number,
+            COALESCE(h.iban, '') as iban,
+            COALESCE(h.swift_code, '') as swift_code,
+            COALESCE(h.bank_details_copy, '') as bank_details_copy,
+            COALESCE(h.personal_email, '') as personal_email,
+            COALESCE(h.phone, '') as phone,
+            COALESCE(h.home_phone, '') as home_phone,
+            COALESCE(h.extension_number, '') as extension_number,
+            COALESCE(h.emergency_contact_name, '') as emergency_contact_name,
+            COALESCE(h.emergency_contact_phone, '') as emergency_contact_phone,
+            COALESCE(h.emergency_contact_relation, '') as emergency_contact_relation,
+            COALESCE(h.emergency_contact_address, '') as emergency_contact_address,
+            COALESCE(h.currency, 'EGP') as currency,
+            COALESCE(h.potential_bonus_percent, 0) as potential_bonus_percent,
+            COALESCE(h.potential_bonus_amount, 0) as potential_bonus_amount,
+            h.potential_bonus,
+            COALESCE(h.kpi_amount, 0) as kpi_amount,
+            COALESCE(h.kpi_frequency, '') as kpi_frequency,
+            COALESCE(h.kpi_payout_mechanism, '') as kpi_payout_mechanism,
+            h.kpi_payout_date,
+            h.reporting_to,
+            h.assigned_shift_id,
+            COALESCE(h.position, u.job_title, '') as position,
+            COALESCE(h.employment_status, u.status, 'active') as employment_status,
+            h.joined_at,
+            h.created_at as hr_created_at,
+            h.updated_at as hr_updated_at
+          FROM users u
+          LEFT JOIN hr_employees h ON u.id = h.user_id
+          LEFT JOIN departments d ON u.department_id = d.id
+          LEFT JOIN (SELECT user_id, SUM(amount) as total_bonuses FROM hr_employee_bonuses GROUP BY user_id) b ON b.user_id = u.id
+          LEFT JOIN (SELECT user_id, SUM(rate) as total_shift_allowances FROM hr_employee_shift_allowances GROUP BY user_id) s ON s.user_id = u.id
+          LEFT JOIN (SELECT user_id, SUM(total_units) as total_equities FROM hr_employee_equities GROUP BY user_id) eq ON eq.user_id = u.id
+          LEFT JOIN (SELECT user_id, COUNT(*) as assets_count FROM hr_employee_assets GROUP BY user_id) ast ON ast.user_id = u.id
+          LEFT JOIN (SELECT user_id, COUNT(*) as penalty_count FROM hr_employee_penalties GROUP BY user_id) pen ON pen.user_id = u.id
+          LEFT JOIN (SELECT user_id, COUNT(*) as trainings_completed FROM hr_employee_trainings WHERE status LIKE '%completed%' OR status = 'Active' OR status IS NULL GROUP BY user_id) trn ON trn.user_id = u.id
+          WHERE ${whereClause}
+          ORDER BY u.id ASC
+        `;
+        const [empRes, assetsRes, leavesRes] = await Promise.all([
+          pool.query(mysqlQuery, queryParams),
+          pool.query(`SELECT user_id, description FROM hr_employee_assets ORDER BY id DESC`).catch(() => ({ rows: [] })),
+          pool.query(`SELECT id, user_id, type, leave_type, start_date, end_date, status, reason, comments, approved_days, created_at FROM hr_leave_requests ORDER BY COALESCE(start_date, DATE(created_at)) DESC`).catch(() => ({ rows: [] }))
+        ]);
+
+        const primaryDeviceMap = new Map<number, string>();
+        for (const a of assetsRes.rows) {
+          if (!primaryDeviceMap.has(a.user_id) && a.description) {
+            primaryDeviceMap.set(a.user_id, a.description);
+          }
+        }
+        const leavesMap = new Map<number, any[]>();
+        for (const lr of leavesRes.rows) {
+          if (!leavesMap.has(lr.user_id)) leavesMap.set(lr.user_id, []);
+          leavesMap.get(lr.user_id)!.push(lr);
+        }
+
+        const safeArr = (v: any) => (Array.isArray(v) ? v : typeof v === 'string' ? (() => { try { return JSON.parse(v); } catch { return []; } })() : []);
+        const now = new Date();
+        const hydrated = empRes.rows.map((row: any) => {
+          const assetsList = safeArr(row.assets_list);
+          const penaltyList = safeArr(row.penalty_history);
+          const trainingsList = safeArr(row.trainings_list);
+          const userLeaves = leavesMap.get(row.id) || [];
+
+          let consumedLeaveDays = 0;
+          let approvedLeavesCount = 0;
+          const leaveHistory = userLeaves.map((lr: any) => {
+            const sDate = lr.start_date ? new Date(lr.start_date) : null;
+            const eDate = lr.end_date ? new Date(lr.end_date) : null;
+            const diffDays = sDate && eDate ? Math.max(1, Math.round((eDate.getTime() - sDate.getTime()) / 86400000) + 1) : 1;
+            const days = lr.approved_days ?? diffDays;
+            if (lr.status === 'Approved') {
+              consumedLeaveDays += Number(days) || 0;
+              approvedLeavesCount++;
+            }
+            return {
+              id: lr.id,
+              type: lr.type || lr.leave_type || 'Annual Leave',
+              start_date: lr.start_date,
+              end_date: lr.end_date,
+              status: lr.status,
+              reason: lr.reason,
+              comments: lr.comments,
+              days,
+              created_at: lr.created_at
+            };
+          });
+
+          const hireDt = row.hire_date ? new Date(row.hire_date) : now;
+          const workedMonths = Math.max(0, Math.round(((now.getTime() - hireDt.getTime()) / (30.4375 * 86400000)) * 10) / 10);
+          const eligDt = new Date(hireDt);
+          eligDt.setMonth(eligDt.getMonth() + 6);
+          const vacBal = Number(row.vacation_balance ?? 21);
+
+          return {
+            ...row,
+            potential_bonus: typeof row.potential_bonus === 'string' ? (() => { try { return JSON.parse(row.potential_bonus); } catch { return {}; } })() : (row.potential_bonus || {}),
+            assets_count: Math.max(Number(row.assets_count || 0), assetsList.length),
+            primary_device: primaryDeviceMap.get(row.id) || assetsList[0]?.description || assetsList[0]?.category || '',
+            penalty_count: Math.max(Number(row.penalty_count || 0), penaltyList.length),
+            trainings_completed: Math.max(Number(row.trainings_completed || 0), trainingsList.length),
+            worked_months: workedMonths,
+            eligibility_date: eligDt.toISOString().slice(0, 10),
+            eligibility_status: now >= eligDt ? 'Eligible' : 'Under Probation',
+            accrual_period: 'Annual (12 Months)',
+            accrued_balance: Math.round((vacBal + consumedLeaveDays) * 10) / 10,
+            consumed_balance: consumedLeaveDays,
+            remaining_balance: vacBal,
+            approved_leaves_count: approvedLeavesCount,
+            leave_history: leaveHistory.length > 0 ? leaveHistory : null
+          };
+        });
+
+        return res.json({
+          success: true,
+          data: hydrated,
+          total: hydrated.length
+        });
+      }
 
       const sqlQuery = `
         SELECT 
@@ -1031,31 +1209,65 @@ export default function hrRoutes(wss: any) {
       const emp = empRes.rows[0];
       const uid = emp.id;
 
-      // Consolidated single query for all sub-tables (1 round-trip, 1 DB connection, zero pool exhaustion)
+      // Consolidated sub-tables loader
       let subData: any = {};
       try {
-        const subRes = await pool.query(`
-          SELECT 
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, effective_date, job_title, department_name, team_name, reporting_to, location, notes FROM hr_employee_job_history WHERE user_id = $1 ORDER BY effective_date DESC) r) as job_history,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, effective_date, pay_rate, pay_frequency, currency, change_reason, notes FROM hr_employee_compensations WHERE user_id = $1 ORDER BY effective_date DESC) r) as compensations,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, title, bonus_type, amount, percent, frequency, payout_date, status, notes FROM hr_employee_bonuses WHERE user_id = $1 ORDER BY id DESC) r) as bonuses,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, title, commission_rate, target_amount, payout_frequency, status, notes FROM hr_employee_commissions WHERE user_id = $1 ORDER BY id DESC) r) as commissions,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, equity_type, total_units, vesting_schedule, grant_date, notes FROM hr_employee_equities WHERE user_id = $1 ORDER BY grant_date DESC) r) as equities,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, allowance_type, rate, frequency, notes FROM hr_employee_shift_allowances WHERE user_id = $1 ORDER BY id DESC) r) as shift_allowances,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, status, effective_date, reason, notes FROM hr_employee_employment_statuses WHERE user_id = $1 ORDER BY effective_date DESC) r) as employment_statuses,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, penalty_type, reason, amount, date_issued, status, notes FROM hr_employee_penalties WHERE user_id = $1 ORDER BY date_issued DESC) r) as penalties,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, category, description, serial_number, date_loaned, date_returned FROM hr_employee_assets WHERE user_id = $1 ORDER BY id DESC) r) as assets,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, COALESCE(full_name, name) as name, relationship, COALESCE(date_of_birth, dob) as dob, gender, created_at FROM hr_employee_dependents WHERE user_id = $1 ORDER BY id DESC) r) as dependents,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, benefit_name, change_type, effective_date, notes FROM hr_employee_benefit_history WHERE user_id = $1 ORDER BY effective_date DESC) r) as benefits_history,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, category, title, assignee, due_date, completed, completed_by, completed_date FROM hr_employee_onboarding_tasks WHERE user_id = $1 ORDER BY id ASC) r) as onboarding_tasks,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, category, title, assignee, due_date, completed, completed_by, completed_date FROM hr_employee_offboarding_tasks WHERE user_id = $1 ORDER BY id ASC) r) as offboarding_tasks,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, course_name, provider, completion_date, expiry_date, score, status, notes FROM hr_employee_trainings WHERE user_id = $1 ORDER BY completion_date DESC) r) as trainings,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, document_type, document_name, file_url, expiry_date, status, notes, folder, size, created_at FROM hr_employee_documents WHERE user_id = $1 ORDER BY id DESC) r) as documents,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, system_name, username, role, access_level, status, url, email, extensions FROM hr_employee_system_logins WHERE user_id = $1 ORDER BY id DESC) r) as system_logins,
-            (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, author_id, author_name, title, content, created_at FROM hr_employee_notes WHERE user_id = $1 ORDER BY created_at DESC) r) as notes
-        `, [uid]);
-        if (subRes.rows.length > 0) {
-          subData = subRes.rows[0];
+        if (getDbType() === 'mysql') {
+          const safeList = (q: string) => pool.query(q, [uid]).then((r) => r.rows).catch(() => []);
+          const [
+            job_history, compensations, bonuses, commissions, equities,
+            shift_allowances, employment_statuses, penalties, assets,
+            dependents, benefits_history, onboarding_tasks, offboarding_tasks,
+            trainings, documents, system_logins, notes
+          ] = await Promise.all([
+            safeList(`SELECT id, user_id, effective_date, job_title, department_name, team_name, reporting_to, location, notes FROM hr_employee_job_history WHERE user_id = $1 ORDER BY effective_date DESC`),
+            safeList(`SELECT id, user_id, effective_date, pay_rate, pay_frequency, currency, change_reason, notes FROM hr_employee_compensations WHERE user_id = $1 ORDER BY effective_date DESC`),
+            safeList(`SELECT id, user_id, title, bonus_type, amount, percent, frequency, payout_date, status, notes FROM hr_employee_bonuses WHERE user_id = $1 ORDER BY id DESC`),
+            safeList(`SELECT id, user_id, title, commission_rate, target_amount, payout_frequency, status, notes FROM hr_employee_commissions WHERE user_id = $1 ORDER BY id DESC`),
+            safeList(`SELECT id, user_id, equity_type, total_units, vesting_schedule, grant_date, notes FROM hr_employee_equities WHERE user_id = $1 ORDER BY grant_date DESC`),
+            safeList(`SELECT id, user_id, allowance_type, rate, frequency, notes FROM hr_employee_shift_allowances WHERE user_id = $1 ORDER BY id DESC`),
+            safeList(`SELECT id, user_id, status, effective_date, reason, notes FROM hr_employee_employment_statuses WHERE user_id = $1 ORDER BY effective_date DESC`),
+            safeList(`SELECT id, user_id, penalty_type, reason, amount, date_issued, status, notes FROM hr_employee_penalties WHERE user_id = $1 ORDER BY date_issued DESC`),
+            safeList(`SELECT id, user_id, category, description, serial_number, date_loaned, date_returned FROM hr_employee_assets WHERE user_id = $1 ORDER BY id DESC`),
+            safeList(`SELECT id, user_id, COALESCE(full_name, name) as name, relationship, COALESCE(date_of_birth, dob) as dob, gender, created_at FROM hr_employee_dependents WHERE user_id = $1 ORDER BY id DESC`),
+            safeList(`SELECT id, user_id, benefit_name, change_type, effective_date, notes FROM hr_employee_benefit_history WHERE user_id = $1 ORDER BY effective_date DESC`),
+            safeList(`SELECT id, user_id, category, title, assignee, due_date, completed, completed_by, completed_date FROM hr_employee_onboarding_tasks WHERE user_id = $1 ORDER BY id ASC`),
+            safeList(`SELECT id, user_id, category, title, assignee, due_date, completed, completed_by, completed_date FROM hr_employee_offboarding_tasks WHERE user_id = $1 ORDER BY id ASC`),
+            safeList(`SELECT id, user_id, course_name, provider, completion_date, expiry_date, score, status, notes FROM hr_employee_trainings WHERE user_id = $1 ORDER BY completion_date DESC`),
+            safeList(`SELECT id, user_id, document_type, document_name, file_url, expiry_date, status, notes, folder, size, created_at FROM hr_employee_documents WHERE user_id = $1 ORDER BY id DESC`),
+            safeList(`SELECT id, user_id, system_name, username, role, access_level, status, url, email, extensions FROM hr_employee_system_logins WHERE user_id = $1 ORDER BY id DESC`),
+            safeList(`SELECT id, user_id, author_id, author_name, title, content, created_at FROM hr_employee_notes WHERE user_id = $1 ORDER BY created_at DESC`),
+          ]);
+          subData = {
+            job_history, compensations, bonuses, commissions, equities,
+            shift_allowances, employment_statuses, penalties, assets,
+            dependents, benefits_history, onboarding_tasks, offboarding_tasks,
+            trainings, documents, system_logins, notes
+          };
+        } else {
+          const subRes = await pool.query(`
+            SELECT 
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, effective_date, job_title, department_name, team_name, reporting_to, location, notes FROM hr_employee_job_history WHERE user_id = $1 ORDER BY effective_date DESC) r) as job_history,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, effective_date, pay_rate, pay_frequency, currency, change_reason, notes FROM hr_employee_compensations WHERE user_id = $1 ORDER BY effective_date DESC) r) as compensations,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, title, bonus_type, amount, percent, frequency, payout_date, status, notes FROM hr_employee_bonuses WHERE user_id = $1 ORDER BY id DESC) r) as bonuses,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, title, commission_rate, target_amount, payout_frequency, status, notes FROM hr_employee_commissions WHERE user_id = $1 ORDER BY id DESC) r) as commissions,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, equity_type, total_units, vesting_schedule, grant_date, notes FROM hr_employee_equities WHERE user_id = $1 ORDER BY grant_date DESC) r) as equities,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, allowance_type, rate, frequency, notes FROM hr_employee_shift_allowances WHERE user_id = $1 ORDER BY id DESC) r) as shift_allowances,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, status, effective_date, reason, notes FROM hr_employee_employment_statuses WHERE user_id = $1 ORDER BY effective_date DESC) r) as employment_statuses,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, penalty_type, reason, amount, date_issued, status, notes FROM hr_employee_penalties WHERE user_id = $1 ORDER BY date_issued DESC) r) as penalties,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, category, description, serial_number, date_loaned, date_returned FROM hr_employee_assets WHERE user_id = $1 ORDER BY id DESC) r) as assets,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, COALESCE(full_name, name) as name, relationship, COALESCE(date_of_birth, dob) as dob, gender, created_at FROM hr_employee_dependents WHERE user_id = $1 ORDER BY id DESC) r) as dependents,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, benefit_name, change_type, effective_date, notes FROM hr_employee_benefit_history WHERE user_id = $1 ORDER BY effective_date DESC) r) as benefits_history,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, category, title, assignee, due_date, completed, completed_by, completed_date FROM hr_employee_onboarding_tasks WHERE user_id = $1 ORDER BY id ASC) r) as onboarding_tasks,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, category, title, assignee, due_date, completed, completed_by, completed_date FROM hr_employee_offboarding_tasks WHERE user_id = $1 ORDER BY id ASC) r) as offboarding_tasks,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, course_name, provider, completion_date, expiry_date, score, status, notes FROM hr_employee_trainings WHERE user_id = $1 ORDER BY completion_date DESC) r) as trainings,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, document_type, document_name, file_url, expiry_date, status, notes, folder, size, created_at FROM hr_employee_documents WHERE user_id = $1 ORDER BY id DESC) r) as documents,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, system_name, username, role, access_level, status, url, email, extensions FROM hr_employee_system_logins WHERE user_id = $1 ORDER BY id DESC) r) as system_logins,
+              (SELECT COALESCE(json_agg(r), '[]'::json) FROM (SELECT id, user_id, author_id, author_name, title, content, created_at FROM hr_employee_notes WHERE user_id = $1 ORDER BY created_at DESC) r) as notes
+          `, [uid]);
+          if (subRes.rows.length > 0) {
+            subData = subRes.rows[0];
+          }
         }
       } catch (subErr) {
         console.warn("Sub-tables query fallback:", subErr);
@@ -1352,9 +1564,9 @@ export default function hrRoutes(wss: any) {
       const attendanceRes = await safeQuery(`
         SELECT 
           COUNT(*) as total_days, 
-          COUNT(*) FILTER (WHERE status = 'Present') as present_days, 
-          COUNT(*) FILTER (WHERE status = 'Late') as late_days, 
-          COUNT(*) FILTER (WHERE status = 'Absent') as absent_days 
+          SUM(CASE WHEN status = 'Present' THEN 1 ELSE 0 END) as present_days, 
+          SUM(CASE WHEN status = 'Late' THEN 1 ELSE 0 END) as late_days, 
+          SUM(CASE WHEN status = 'Absent' THEN 1 ELSE 0 END) as absent_days 
         FROM hr_attendance 
         WHERE user_id = $1 AND company_id = $2
       `, [userId, companyId]);
@@ -2627,7 +2839,7 @@ export default function hrRoutes(wss: any) {
                a.worked_hours,
                a.created_at,
                a.updated_at,
-               COALESCE(u.name, h.personal_info->>'full_name', h.personal_info->>'name', 'Employee #' || COALESCE(a.employee_id, CAST(a.user_id AS TEXT))) as employee_name,
+               COALESCE(u.name, h.personal_info->>'full_name', h.personal_info->>'name', CONCAT('Employee #', COALESCE(a.employee_id, CAST(a.user_id AS TEXT)))) as employee_name,
                COALESCE(a.employee_id, h.employee_id, h.id_number, u.employee_id) as employee_code
         FROM hr_attendance a
         LEFT JOIN users u ON (
@@ -3326,9 +3538,9 @@ export default function hrRoutes(wss: any) {
       const attRes = await pool.query(`
         SELECT 
           COUNT(*) as total_attendance_logs,
-          COUNT(*) FILTER (WHERE status = 'Present' OR status = 'Late' OR (clock_in IS NOT NULL AND status != 'Absent')) as worked_days_count,
+          SUM(CASE WHEN status = 'Present' OR status = 'Late' OR (clock_in IS NOT NULL AND status != 'Absent') THEN 1 ELSE 0 END) as worked_days_count,
           COALESCE(SUM(worked_hours), 0) as total_work_hours,
-          COUNT(*) FILTER (WHERE status = 'Absent') as absent_count,
+          SUM(CASE WHEN status = 'Absent' THEN 1 ELSE 0 END) as absent_count,
           COALESCE(SUM(late_minutes), 0) as total_late_mins
         FROM hr_attendance
         WHERE user_id = $1 AND company_id = $2
@@ -3741,7 +3953,7 @@ export default function hrRoutes(wss: any) {
         let tasksQuery = `
           SELECT 
             COUNT(*) as total_tasks,
-            COUNT(*) FILTER (WHERE status = 'completed') as completed_tasks
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_tasks
           FROM tasks
           WHERE assigned_to = $1 AND company_id = $2
         `;
@@ -3762,9 +3974,9 @@ export default function hrRoutes(wss: any) {
         let salesQuery = `
           SELECT 
             COUNT(*) as total_deals,
-            COUNT(*) FILTER (WHERE s.name = 'Done' OR s.name ILIKE '%Won%' OR s.name LIKE '%🟢%' OR s.is_won = TRUE) as won_deals,
+            SUM(CASE WHEN s.name = 'Done' OR s.name ILIKE '%Won%' OR s.name LIKE '%🟢%' OR s.is_won = TRUE THEN 1 ELSE 0 END) as won_deals,
             COALESCE(SUM(d.value), 0) as total_value,
-            COALESCE(SUM(d.value) FILTER (WHERE s.name = 'Done' OR s.name ILIKE '%Won%' OR s.name LIKE '%🟢%' OR s.is_won = TRUE), 0) as won_value
+            COALESCE(SUM(CASE WHEN s.name = 'Done' OR s.name ILIKE '%Won%' OR s.name LIKE '%🟢%' OR s.is_won = TRUE THEN d.value ELSE 0 END), 0) as won_value
           FROM crm_deals d
           LEFT JOIN crm_stages s ON d.stage_id = s.id
           WHERE d.assigned_to = $1 AND d.company_id = $2
@@ -3807,9 +4019,9 @@ export default function hrRoutes(wss: any) {
         let attendanceQuery = `
           SELECT 
             COUNT(*) as total_days, 
-            COUNT(*) FILTER (WHERE status = 'Present' OR status = 'On Leave') as perfect_days, 
-            COUNT(*) FILTER (WHERE status = 'Late') as late_days, 
-            COUNT(*) FILTER (WHERE status = 'Half-Day') as half_days 
+            SUM(CASE WHEN status = 'Present' OR status = 'On Leave' THEN 1 ELSE 0 END) as perfect_days, 
+            SUM(CASE WHEN status = 'Late' THEN 1 ELSE 0 END) as late_days, 
+            SUM(CASE WHEN status = 'Half-Day' THEN 1 ELSE 0 END) as half_days 
           FROM hr_attendance 
           WHERE user_id = $1 AND company_id = $2
         `;
@@ -3865,7 +4077,7 @@ export default function hrRoutes(wss: any) {
       let tasksQuery = `
         SELECT 
           COUNT(*) as total_tasks,
-          COUNT(*) FILTER (WHERE status = 'completed') as completed_tasks
+          SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_tasks
         FROM tasks
         WHERE assigned_to = $1 AND company_id = $2
       `;
@@ -3886,9 +4098,9 @@ export default function hrRoutes(wss: any) {
       let salesQuery = `
         SELECT 
           COUNT(*) as total_deals,
-          COUNT(*) FILTER (WHERE s.name = 'Done' OR s.name ILIKE '%Won%' OR s.name LIKE '%🟢%' OR s.is_won = TRUE) as won_deals,
+          SUM(CASE WHEN s.name = 'Done' OR s.name ILIKE '%Won%' OR s.name LIKE '%🟢%' OR s.is_won = TRUE THEN 1 ELSE 0 END) as won_deals,
           COALESCE(SUM(d.value), 0) as total_value,
-          COALESCE(SUM(d.value) FILTER (WHERE s.name = 'Done' OR s.name ILIKE '%Won%' OR s.name LIKE '%🟢%' OR s.is_won = TRUE), 0) as won_value
+          COALESCE(SUM(CASE WHEN s.name = 'Done' OR s.name ILIKE '%Won%' OR s.name LIKE '%🟢%' OR s.is_won = TRUE THEN d.value ELSE 0 END), 0) as won_value
         FROM crm_deals d
         LEFT JOIN crm_stages s ON d.stage_id = s.id
         WHERE d.assigned_to = $1 AND d.company_id = $2
@@ -3931,9 +4143,9 @@ export default function hrRoutes(wss: any) {
       let attendanceQuery = `
         SELECT 
           COUNT(*) as total_days, 
-          COUNT(*) FILTER (WHERE status = 'Present' OR status = 'On Leave') as perfect_days, 
-          COUNT(*) FILTER (WHERE status = 'Late') as late_days, 
-          COUNT(*) FILTER (WHERE status = 'Half-Day') as half_days 
+          SUM(CASE WHEN status = 'Present' OR status = 'On Leave' THEN 1 ELSE 0 END) as perfect_days, 
+          SUM(CASE WHEN status = 'Late' THEN 1 ELSE 0 END) as late_days, 
+          SUM(CASE WHEN status = 'Half-Day' THEN 1 ELSE 0 END) as half_days 
         FROM hr_attendance 
         WHERE user_id = $1 AND company_id = $2
       `;

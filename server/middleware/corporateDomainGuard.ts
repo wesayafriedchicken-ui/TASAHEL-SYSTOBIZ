@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { pool } from "../db/schema.js";
+import { pool, getDbType } from "../db/schema.js";
 
 export interface CorporateDomainAuthRequest extends Request {
   corporateTenant?: {
@@ -51,41 +51,58 @@ export const corporateDomainAuthGuard = async (
   try {
     // 2. Domain Whitelisting (Tenant Registry check against companies table)
     let companyRes;
-    try {
-      companyRes = await pool.query(
-        `SELECT id, name, subdomain, corporate_domain, corporate_domains, logo_url, settings 
-         FROM companies 
-         WHERE LOWER(COALESCE(corporate_domain, '')) = $1
-            OR (corporate_domains IS NOT NULL AND (
-                corporate_domains @> to_jsonb($1::text)
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(corporate_domains) d WHERE LOWER(d) = LOWER($1))
-            ))
-            OR (settings->'corporate_domains' IS NOT NULL AND (
-                settings->'corporate_domains' @> to_jsonb($1::text)
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(settings->'corporate_domains') d WHERE LOWER(d) = LOWER($1))
-            ))
-            OR LOWER(COALESCE(settings->>'corporate_domain', '')) = $1
-            OR (corporate_domain IS NOT NULL AND (
-                $1 = ANY(string_to_array(LOWER(corporate_domain), ','))
-                OR LOWER(corporate_domain) LIKE '%' || $1 || '%'
-            ))
-         ORDER BY id ASC
-         LIMIT 1`,
-        [domain]
+    if (getDbType() === 'mysql') {
+      const allComps = await pool.query(
+        `SELECT id, name, subdomain, corporate_domain, corporate_domains, logo_url, settings FROM companies ORDER BY id ASC`
       );
-    } catch (compErr: any) {
-      // Safe fallback without jsonb functions if schema differences exist
-      companyRes = await pool.query(
-        `SELECT id, name, subdomain, corporate_domain, logo_url, settings 
-         FROM companies 
-         WHERE LOWER(COALESCE(corporate_domain, '')) = $1
-            OR LOWER(COALESCE(subdomain, '')) = $1
-            OR LOWER(name) LIKE '%' || $1 || '%'
-            OR id = 1
-         ORDER BY id ASC
-         LIMIT 1`,
-        [domain]
-      );
+      const matched = allComps.rows.find((c: any) => {
+        const cd = (c.corporate_domain || '').toLowerCase();
+        if (cd === domain || cd.split(',').map((s: string) => s.trim()).includes(domain) || (cd && cd.includes(domain))) return true;
+        const cArr = Array.isArray(c.corporate_domains) ? c.corporate_domains : (typeof c.corporate_domains === 'string' ? (() => { try { return JSON.parse(c.corporate_domains); } catch { return []; } })() : []);
+        if (cArr.some((d: any) => String(d).toLowerCase() === domain)) return true;
+        const settingsObj = typeof c.settings === 'string' ? (() => { try { return JSON.parse(c.settings); } catch { return {}; } })() : (c.settings || {});
+        if ((settingsObj.corporate_domain || '').toLowerCase() === domain) return true;
+        if (Array.isArray(settingsObj.corporate_domains) && settingsObj.corporate_domains.some((d: any) => String(d).toLowerCase() === domain)) return true;
+        return false;
+      });
+      companyRes = { rows: matched ? [matched] : [] };
+    } else {
+      try {
+        companyRes = await pool.query(
+          `SELECT id, name, subdomain, corporate_domain, corporate_domains, logo_url, settings 
+           FROM companies 
+           WHERE LOWER(COALESCE(corporate_domain, '')) = $1
+              OR (corporate_domains IS NOT NULL AND (
+                  corporate_domains @> to_jsonb($1::text)
+                  OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(corporate_domains) d WHERE LOWER(d) = LOWER($1))
+              ))
+              OR (settings->'corporate_domains' IS NOT NULL AND (
+                  settings->'corporate_domains' @> to_jsonb($1::text)
+                  OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(settings->'corporate_domains') d WHERE LOWER(d) = LOWER($1))
+              ))
+              OR LOWER(COALESCE(settings->>'corporate_domain', '')) = $1
+              OR (corporate_domain IS NOT NULL AND (
+                  $1 = ANY(string_to_array(LOWER(corporate_domain), ','))
+                  OR LOWER(corporate_domain) LIKE CONCAT('%', $1, '%')
+              ))
+           ORDER BY id ASC
+           LIMIT 1`,
+          [domain]
+        );
+      } catch (compErr: any) {
+        // Safe fallback without jsonb functions if schema differences exist
+        companyRes = await pool.query(
+          `SELECT id, name, subdomain, corporate_domain, logo_url, settings 
+           FROM companies 
+           WHERE LOWER(COALESCE(corporate_domain, '')) = $1
+              OR LOWER(COALESCE(subdomain, '')) = $1
+              OR LOWER(name) LIKE CONCAT('%', $1, '%')
+              OR id = 1
+           ORDER BY id ASC
+           LIMIT 1`,
+          [domain]
+        );
+      }
     }
 
     if (companyRes.rows.length === 0) {

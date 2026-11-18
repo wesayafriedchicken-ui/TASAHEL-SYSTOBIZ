@@ -1,6 +1,6 @@
 import express from "express";
 import Papa from "papaparse";
-import { pool } from "../../db/schema.js";
+import { pool, getDbType } from "../../db/schema.js";
 import { automationService } from "../../services/automation.service.js";
 import { logAction } from "../../services/auditLogger.js";
 import { memoryCache } from "../../utils/cache.js";
@@ -10,6 +10,7 @@ export default function qaRoutes(wss: any) {
 
   // Proactively ensure database schema compatibility for QA tables
   const ensureQASchema = async () => {
+    if (getDbType() === 'mysql') return;
     try {
       await pool.query(`
         DO $$
@@ -1458,10 +1459,10 @@ export default function qaRoutes(wss: any) {
 
       // 2. Also check in details JSON if present
       try {
-        const detailsCheck = await pool.query(
-          "SELECT count(*) FROM qa_transaction_audits WHERE details->>$1 = $2",
-          [cleanKey, cleanVal]
-        );
+        const detailsQuery = getDbType() === 'mysql'
+          ? "SELECT count(*) as count FROM qa_transaction_audits WHERE JSON_UNQUOTE(JSON_EXTRACT(details, CONCAT('$.', $1))) = $2"
+          : "SELECT count(*) FROM qa_transaction_audits WHERE details->>$1 = $2";
+        const detailsCheck = await pool.query(detailsQuery, [cleanKey, cleanVal]);
         count += parseInt(detailsCheck.rows[0]?.count || "0", 10);
       } catch {
         // fallback
@@ -1564,12 +1565,19 @@ export default function qaRoutes(wss: any) {
 
         // 2. In details JSON
         try {
-          const updDetails = await pool.query(
-            `UPDATE qa_transaction_audits 
-             SET details = jsonb_set(COALESCE(details::jsonb, '{}'::jsonb), ARRAY[$1], to_jsonb($2::text))
-             WHERE details->>$1 = $3`,
-            [targetFieldKey, cleanReplace, targetOptionValue]
-          );
+          const updDetails = getDbType() === 'mysql'
+            ? await pool.query(
+                `UPDATE qa_transaction_audits
+                 SET details = JSON_SET(COALESCE(details, JSON_OBJECT()), CONCAT('$.', $1), $2)
+                 WHERE JSON_UNQUOTE(JSON_EXTRACT(details, CONCAT('$.', $1))) = $3`,
+                [targetFieldKey, cleanReplace, targetOptionValue]
+              )
+            : await pool.query(
+                `UPDATE qa_transaction_audits 
+                 SET details = jsonb_set(COALESCE(details::jsonb, '{}'::jsonb), ARRAY[$1], to_jsonb($2::text))
+                 WHERE details->>$1 = $3`,
+                [targetFieldKey, cleanReplace, targetOptionValue]
+              );
           updatedRecordsCount += updDetails.rowCount || 0;
         } catch (jErr) {
           // ignore

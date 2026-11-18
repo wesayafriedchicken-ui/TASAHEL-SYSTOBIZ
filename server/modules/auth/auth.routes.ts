@@ -2,7 +2,7 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
-import { pool } from "../../db/schema.js";
+import { pool, getDbType } from "../../db/schema.js";
 import { corporateDomainAuthGuard, CorporateDomainAuthRequest } from "../../middleware/corporateDomainGuard.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "business_core_secret_key_2026";
@@ -24,27 +24,45 @@ export default function authRoutes() {
     }
 
     try {
-      const companyRes = await pool.query(
-        `SELECT id, name, subdomain, corporate_domain, corporate_domains, logo_url 
-         FROM companies 
-         WHERE LOWER(COALESCE(corporate_domain, '')) = $1
-            OR (corporate_domains IS NOT NULL AND (
-                corporate_domains @> to_jsonb($1::text)
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(corporate_domains) d WHERE LOWER(d) = LOWER($1))
-            ))
-            OR (settings->'corporate_domains' IS NOT NULL AND (
-                settings->'corporate_domains' @> to_jsonb($1::text)
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(settings->'corporate_domains') d WHERE LOWER(d) = LOWER($1))
-            ))
-            OR LOWER(COALESCE(settings->>'corporate_domain', '')) = $1
-            OR (corporate_domain IS NOT NULL AND (
-                $1 = ANY(string_to_array(LOWER(corporate_domain), ','))
-                OR LOWER(corporate_domain) LIKE '%' || $1 || '%'
-            ))
-         ORDER BY id ASC
-         LIMIT 1`,
-        [domain]
-      );
+      let companyRes;
+      if (getDbType() === 'mysql') {
+        const allComps = await pool.query(
+          `SELECT id, name, subdomain, corporate_domain, corporate_domains, logo_url, settings FROM companies ORDER BY id ASC`
+        );
+        const matched = allComps.rows.find((c: any) => {
+          const cd = (c.corporate_domain || '').toLowerCase();
+          if (cd === domain || cd.split(',').map((s: string) => s.trim()).includes(domain) || (cd && cd.includes(domain))) return true;
+          const cArr = Array.isArray(c.corporate_domains) ? c.corporate_domains : (typeof c.corporate_domains === 'string' ? (() => { try { return JSON.parse(c.corporate_domains); } catch { return []; } })() : []);
+          if (cArr.some((d: any) => String(d).toLowerCase() === domain)) return true;
+          const settingsObj = typeof c.settings === 'string' ? (() => { try { return JSON.parse(c.settings); } catch { return {}; } })() : (c.settings || {});
+          if ((settingsObj.corporate_domain || '').toLowerCase() === domain) return true;
+          if (Array.isArray(settingsObj.corporate_domains) && settingsObj.corporate_domains.some((d: any) => String(d).toLowerCase() === domain)) return true;
+          return false;
+        });
+        companyRes = { rows: matched ? [matched] : [] };
+      } else {
+        companyRes = await pool.query(
+          `SELECT id, name, subdomain, corporate_domain, corporate_domains, logo_url 
+           FROM companies 
+           WHERE LOWER(COALESCE(corporate_domain, '')) = $1
+              OR (corporate_domains IS NOT NULL AND (
+                  corporate_domains @> to_jsonb($1::text)
+                  OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(corporate_domains) d WHERE LOWER(d) = LOWER($1))
+              ))
+              OR (settings->'corporate_domains' IS NOT NULL AND (
+                  settings->'corporate_domains' @> to_jsonb($1::text)
+                  OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(settings->'corporate_domains') d WHERE LOWER(d) = LOWER($1))
+              ))
+              OR LOWER(COALESCE(settings->>'corporate_domain', '')) = $1
+              OR (corporate_domain IS NOT NULL AND (
+                  $1 = ANY(string_to_array(LOWER(corporate_domain), ','))
+                  OR LOWER(corporate_domain) LIKE CONCAT('%', $1, '%')
+              ))
+           ORDER BY id ASC
+           LIMIT 1`,
+          [domain]
+        );
+      }
 
       if (companyRes.rows.length === 0) {
         return res.status(404).json({
@@ -55,8 +73,11 @@ export default function authRoutes() {
       }
 
       const company = companyRes.rows[0];
-      const allDomains = Array.isArray(company.corporate_domains) && company.corporate_domains.length > 0
+      const parsedDomains = Array.isArray(company.corporate_domains)
         ? company.corporate_domains
+        : (typeof company.corporate_domains === 'string' ? (() => { try { return JSON.parse(company.corporate_domains); } catch { return []; } })() : []);
+      const allDomains = parsedDomains.length > 0
+        ? parsedDomains
         : [company.corporate_domain || domain].filter(Boolean);
 
       return res.json({

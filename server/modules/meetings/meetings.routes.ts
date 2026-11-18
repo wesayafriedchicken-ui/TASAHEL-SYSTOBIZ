@@ -1,5 +1,5 @@
 import express from "express";
-import { pool } from "../../db/schema.js";
+import { pool, getDbType } from "../../db/schema.js";
 import { logAction } from "../../services/auditLogger.js";
 import { NotificationService } from "../../services/notification.service.js";
 import { GoogleGenAI } from "@google/genai";
@@ -40,7 +40,37 @@ export default function meetingsRoutes(wss: any) {
     try {
       const companyId = (req as any).user?.company_id || 1;
 
-      // Fetch meetings
+      if (getDbType() === 'mysql') {
+        const meetingsRes = await pool.query(
+          `SELECT * FROM company_meetings WHERE company_id = $1 ORDER BY meeting_time DESC`,
+          [companyId]
+        );
+        const meetings = meetingsRes.rows;
+        if (meetings.length === 0) {
+          return res.json([]);
+        }
+        const meetingIds = meetings.map((m: any) => m.id);
+        const attRes = await pool.query(
+          `SELECT ma.meeting_id, u.id, u.name, u.email, u.job_title
+           FROM meeting_attendees ma
+           JOIN users u ON ma.user_id = u.id
+           WHERE ma.meeting_id = ANY($1)`,
+          [meetingIds]
+        ).catch(() => ({ rows: [] as any[] }));
+        const attMap = new Map<number, any[]>();
+        for (const row of attRes.rows) {
+          if (!attMap.has(row.meeting_id)) attMap.set(row.meeting_id, []);
+          attMap.get(row.meeting_id)!.push({
+            id: row.id,
+            name: row.name,
+            email: row.email,
+            job_title: row.job_title,
+          });
+        }
+        return res.json(meetings.map((m: any) => ({ ...m, attendees: attMap.get(m.id) || [] })));
+      }
+
+      // Fetch meetings (PostgreSQL)
       const meetingsRes = await pool.query(
         `SELECT m.*, 
           COALESCE(

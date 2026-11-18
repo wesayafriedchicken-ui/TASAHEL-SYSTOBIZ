@@ -1,197 +1,126 @@
 import dotenv from 'dotenv';
 dotenv.config({ override: true });
-import pg from 'pg';
-const { Pool } = pg;
+import fs from 'fs';
+import path from 'path';
+import {
+  pool,
+  dbType,
+  isMysql,
+  isPostgres,
+  getDbType,
+  isDatabaseAvailable,
+  setDatabaseAvailable,
+  isMysqlConfigured
+} from './dbAdapter.js';
 
-function getSanitizedDbUrl(rawUrl?: string): string | undefined {
-  if (!rawUrl || rawUrl.includes('mtzbvvotrffnylwsujra')) {
-    rawUrl = process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('mtzbvvotrffnylwsujra')
-      ? process.env.DATABASE_URL
-      : 'postgresql://postgres.dpqpwqcmhcczwfvrkpot:Esraa%40131096@aws-0-eu-west-1.pooler.supabase.com:6543/postgres';
-  }
-  try {
-    // If the URL contains multiple '@' signs (e.g. unencoded '@' in password)
-    // format: postgresql://username:password@hostname:port/database
-    let processedUrl = rawUrl;
-    const protocolMatch = processedUrl.match(/^(postgres(?:ql)?:\/\/)(.*)$/);
-    if (protocolMatch) {
-      const rest = protocolMatch[2];
-      const lastAtIndex = rest.lastIndexOf('@');
-      if (lastAtIndex !== -1) {
-        const authPart = rest.substring(0, lastAtIndex);
-        const hostPart = rest.substring(lastAtIndex + 1);
-        const firstColonIndex = authPart.indexOf(':');
-        if (firstColonIndex !== -1) {
-          const user = authPart.substring(0, firstColonIndex);
-          const rawPassword = authPart.substring(firstColonIndex + 1);
-          processedUrl = `${protocolMatch[1]}${encodeURIComponent(user)}:${encodeURIComponent(decodeURIComponent(rawPassword))}@${hostPart}`;
+export { pool, dbType, isMysql, isPostgres, getDbType, isDatabaseAvailable };
+
+/**
+ * Splits a .sql file cleanly into executable statements (skipping comments & empty statements).
+ */
+function splitSqlStatements(sqlContent: string): string[] {
+  const statements: string[] = [];
+  let current = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let i = 0;
+
+  while (i < sqlContent.length) {
+    const ch = sqlContent[i];
+    const next = sqlContent[i + 1];
+
+    // Line comments --
+    if (!inSingleQuote && !inDoubleQuote && ch === '-' && next === '-') {
+      while (i < sqlContent.length && sqlContent[i] !== '\n') i++;
+      continue;
+    }
+
+    // Block comments /* ... */
+    if (!inSingleQuote && !inDoubleQuote && ch === '/' && next === '*') {
+      i += 2;
+      while (i < sqlContent.length && !(sqlContent[i] === '*' && sqlContent[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+
+    if (ch === "'" && !inDoubleQuote) {
+      if (sqlContent[i - 1] !== '\\') {
+        if (inSingleQuote && next === "'") {
+          current += "''";
+          i += 2;
+          continue;
         }
+        inSingleQuote = !inSingleQuote;
       }
+      current += ch;
+      i++;
+      continue;
     }
 
-    const parsed = new URL(processedUrl);
-    parsed.searchParams.delete('sslmode');
-    parsed.searchParams.delete('ssl');
-    return parsed.toString();
-  } catch (e) {
-    return rawUrl.replace(/[?&]sslmode=[^&]+/g, '').replace(/[?&]ssl=[^&]+/g, '');
+    if (ch === '"' && !inSingleQuote) {
+      if (sqlContent[i - 1] !== '\\') inDoubleQuote = !inDoubleQuote;
+      current += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === ';' && !inSingleQuote && !inDoubleQuote) {
+      const trimmed = current.trim();
+      if (trimmed) statements.push(trimmed);
+      current = '';
+      i++;
+      continue;
+    }
+
+    current += ch;
+    i++;
   }
+
+  const tail = current.trim();
+  if (tail) statements.push(tail);
+  return statements;
 }
-
-const connectionString = getSanitizedDbUrl(process.env.DATABASE_URL);
-
-// Parse max connections: Supabase pooler accommodates high concurrency.
-// We default to 10 connections for balanced throughput and preventing checkout queue exhaustion.
-const parsedPoolMax = process.env.DB_POOL_MAX ? parseInt(process.env.DB_POOL_MAX, 10) : 10;
-const maxPoolConnections = isNaN(parsedPoolMax) || parsedPoolMax < 1 ? 10 : parsedPoolMax;
-
-export const pool = new Pool({
-  connectionString,
-  ssl: {
-    rejectUnauthorized: false
-  },
-  connectionTimeoutMillis: 30000, // 30s connection checkout timeout to absorb cold-starts and traffic spikes
-  max: maxPoolConnections,
-  idleTimeoutMillis: 30000, // 30s idle timeout for healthy connection recycling
-  allowExitOnIdle: false,
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 10000,
-});
-
-// Avoid issuing concurrent asynchronous SET queries inside pool.on('connect') 
-// which conflict with PgBouncer transaction pooling and cause socket contention.
-
-export let isDatabaseAvailable = Boolean(process.env.DATABASE_URL);
-
-// Override pool.query to handle database query execution and transient retry globally with exponential backoff & jitter
-const originalQuery = pool.query.bind(pool);
-(pool as any).query = async (text: string | pg.QueryConfig, params?: any[]) => {
-  if (!process.env.DATABASE_URL) {
-    return { rows: [], rowCount: 0, fields: [], command: 'SELECT', oid: 0 };
-  }
-
-  let attempt = 0;
-  const maxRetries = 4; // 4 retries for sufficient resilience during transient pooler spikes or cold wakeups
-
-  while (true) {
-    try {
-      const res = await originalQuery(text, params);
-      isDatabaseAvailable = true;
-      return res;
-    } catch (err: any) {
-      attempt++;
-      const errMsg = err?.message || '';
-      const errCode = err?.code;
-
-      const isTransientError = 
-        errMsg.includes('timeout exceeded') || 
-        errMsg.includes('Query read timeout') ||
-        errMsg.includes('ECHECKOUTTIMEOUT') ||
-        errMsg.includes('unable to check out connection') ||
-        errMsg.includes('authentication did not complete') ||
-        errMsg.includes('Failed to connect to database') ||
-        errMsg.includes('Connection terminated') ||
-        errMsg.includes('Connection closed') ||
-        errMsg.includes('client has already been released') ||
-        errMsg.includes('remaining connection slots are reserved') ||
-        errMsg.includes('too many clients') ||
-        errMsg.includes('econnrefused') ||
-        errCode === 'ECONNRESET' ||
-        errCode === 'ECONNREFUSED' ||
-        errCode === 'ETIMEDOUT' ||
-        errCode === '57P01' ||
-        errCode === 'XX000' ||
-        errCode === '08006' ||
-        errCode === '08001' ||
-        errCode === '08004' ||
-        errCode === '53300';
-
-      if (isTransientError && attempt <= maxRetries) {
-        // Exponential backoff with jitter: ~500ms, ~1200ms, ~2500ms, ~4500ms
-        const delay = Math.floor(500 * Math.pow(1.9, attempt - 1) + Math.random() * 300);
-        console.warn(`⚠️ Transient DB issue (${errMsg || errCode}). Retrying (${attempt}/${maxRetries}) in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-
-      if (
-        errCode === 'ENOTFOUND' || 
-        errCode === 'ECONNREFUSED' || 
-        errCode === '57P01' || 
-        errCode === '28P01' || 
-        errCode === '08006' ||
-        errCode === '08001' ||
-        errCode === '08004' ||
-        errMsg.includes('timeout') || 
-        errMsg.includes('ECHECKOUTTIMEOUT') ||
-        errMsg.includes('Failed to connect to database') ||
-        errMsg.includes('authentication did not complete') ||
-        errMsg.includes('econnrefused')
-      ) {
-        isDatabaseAvailable = false;
-        console.warn(`⚠️ Database connection lost or unreachable (${errCode || errMsg}) — returning empty fallback.`);
-        return { rows: [], rowCount: 0, fields: [], command: 'SELECT', oid: 0 };
-      } else if (errCode === '23505') {
-        console.warn(`⚠️ Unique constraint violation (${err.detail || errMsg})`);
-      } else {
-        const qPreview = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim().substring(0, 150) : 'config-object';
-        console.error(`❌ Database Query Error: [${errCode || 'ERR'}] ${errMsg} (Query: ${qPreview})`);
-      }
-      throw err;
-    }
-  }
-};
-
-// Periodic background heartbeat to prevent Supabase compute from going into cold sleep
-setInterval(async () => {
-  try {
-    if (isDatabaseAvailable) {
-      await originalQuery('SELECT 1');
-    }
-  } catch (_pingErr) {
-    // Silent fail on heartbeat, pool will self-heal
-  }
-}, 4 * 60 * 1000).unref();
-
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle database client', err);
-  if ((err as any).code === 'ENOTFOUND' || (err as any).code === 'ECONNREFUSED' || (err as any).code === '28P01') {
-    isDatabaseAvailable = false;
-  }
-});
 
 export async function initDatabase() {
   let client;
   let retries = 2;
   let delay = 1000;
-  
+
   while (retries > 0) {
     try {
-      console.log(`🐘 Connecting to PostgreSQL (Attempts left: ${retries})...`);
-      if (!process.env.DATABASE_URL) {
-        console.warn("⚠️ DATABASE_URL is not set. Database initialization skipped.");
-        isDatabaseAvailable = false;
-        return;
+      if (isMysql) {
+        console.log(`🐬 Connecting to MySQL (Attempts left: ${retries})...`);
+        if (!isMysqlConfigured()) {
+          console.warn("⚠️ MySQL configuration (DATABASE_URL or MYSQL_HOST) is not set. Database initialization skipped.");
+          setDatabaseAvailable(false);
+          return;
+        }
+      } else {
+        console.log(`🐘 Connecting to PostgreSQL (Attempts left: ${retries})...`);
+        if (!process.env.DATABASE_URL) {
+          console.warn("⚠️ DATABASE_URL is not set. Database initialization skipped.");
+          setDatabaseAvailable(false);
+          return;
+        }
       }
       client = await pool.connect();
-      console.log("✅ Connected to PostgreSQL");
-      isDatabaseAvailable = true;
+      console.log(`✅ Connected to ${isMysql ? 'MySQL' : 'PostgreSQL'}`);
+      setDatabaseAvailable(true);
       break;
     } catch (err) {
       retries--;
       const errCode = (err as any)?.code;
       const errMsg = (err as Error)?.message || '';
       console.error(`❌ Database connection attempt failed: ${errMsg}`);
-      
-      // If authentication failed (wrong password / user / SASL), don't retry in loops
-      if (errCode === '28P01' || errMsg.includes('SASL') || errMsg.includes('password authentication')) {
+
+      if (errCode === '28P01' || errCode === 'ER_ACCESS_DENIED_ERROR' || errMsg.includes('SASL') || errMsg.includes('password authentication')) {
         console.warn("⚠️ Database authentication credentials invalid. Skipping retry loop to maintain server availability.");
-        isDatabaseAvailable = false;
+        setDatabaseAvailable(false);
         return;
       }
 
       if (retries === 0) {
-        isDatabaseAvailable = false;
+        setDatabaseAvailable(false);
         if (errCode === 'ENOTFOUND' || errCode === 'ECONNREFUSED') {
           console.error(`❌ Database connection failed (${errCode}): The host could not be reached. Continuing in sandbox/offline mode.`);
         } else {
@@ -205,8 +134,79 @@ export async function initDatabase() {
     }
   }
 
+  if (!client) return;
+
+  // ============================================================================
+  // MYSQL INITIALIZATION PATH
+  // ============================================================================
+  if (isMysql) {
+    try {
+      try {
+        const metaRes = await client.query(`SELECT version FROM _systo_schema_meta WHERE \`key\` = 'schema_version' LIMIT 1`);
+        if (metaRes.rows.length > 0 && metaRes.rows[0].version >= 28) {
+          console.log(`⚡ MySQL Database ready (schema cached v${metaRes.rows[0].version}). Fast-path startup complete.`);
+          return;
+        }
+      } catch (_noMeta) {}
+
+      // Check if users table already exists in MySQL
+      const usersCheck = await client.query(
+        `SELECT TABLE_NAME AS tbl_exists FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'users' LIMIT 1`
+      );
+
+      if (usersCheck.rows.length === 0) {
+        const schemaPath = path.resolve(process.cwd(), 'server', 'db', 'schema.mysql.sql');
+        if (fs.existsSync(schemaPath)) {
+          console.log('🛠️ Bootstrapping fresh MySQL database from server/db/schema.mysql.sql...');
+          const rawSql = fs.readFileSync(schemaPath, 'utf-8');
+          const statements = splitSqlStatements(rawSql);
+          for (const stmt of statements) {
+            try {
+              await client.query(stmt);
+            } catch (stmtErr: any) {
+              // Ignore duplicate index/key errors on partial runs
+              if (stmtErr?.code !== 'ER_DUP_KEYNAME' && stmtErr?.code !== 'ER_TABLE_EXISTS_ERROR') {
+                console.warn(`⚠️ MySQL bootstrap statement notice: ${stmtErr?.message}`);
+              }
+            }
+          }
+          console.log(`✅ MySQL schema initialized cleanly (${statements.length} statements executed).`);
+        } else {
+          console.warn('⚠️ server/db/schema.mysql.sql not found. Please run schema.mysql.sql manually.');
+        }
+      }
+
+      // Ensure _systo_schema_meta reflects v28
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS _systo_schema_meta (
+          \`key\` VARCHAR(191) PRIMARY KEY,
+          version INT NOT NULL,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `).catch(() => {});
+
+      await client.query(
+        `INSERT INTO _systo_schema_meta (\`key\`, version, updated_at) VALUES ('schema_version', 28, CURRENT_TIMESTAMP)
+         ON DUPLICATE KEY UPDATE version = 28, updated_at = CURRENT_TIMESTAMP`
+      ).catch(() => {});
+
+      console.log('⚡ MySQL Database verified & ready.');
+      return;
+    } catch (mysqlInitErr) {
+      console.error('❌ MySQL initialization error:', mysqlInitErr);
+      return;
+    } finally {
+      try {
+        client.release();
+      } catch (_e) {}
+    }
+  }
+
+  // ============================================================================
+  // POSTGRESQL / SUPABASE INITIALIZATION PATH
+  // ============================================================================
   try {
-    // 0. Instant Fast-Path: If schema meta exists and version >= 26, exit immediately with zero DDL overhead (< 5ms)
+    // 0. Instant Fast-Path: If schema meta exists and version >= 28, exit immediately with zero DDL overhead (< 5ms)
     try {
       const metaRes = await client.query(`SELECT version FROM _systo_schema_meta WHERE key = 'schema_version' LIMIT 1`);
       if (metaRes.rows.length > 0 && metaRes.rows[0].version >= 28) {
@@ -4594,7 +4594,7 @@ export async function initDatabase() {
 
     console.log("✅ PostgreSQL Database Initialized Successfully");
   } catch (err) {
-    isDatabaseAvailable = false;
+    setDatabaseAvailable(false);
     if ((err as any).code === 'ENOTFOUND' || (err as any).code === 'ECONNREFUSED') {
       console.error(`❌ Database connection failed (${(err as any).code}): The host could not be found or reached. Falling back to mock/empty data.`);
       console.info("💡 Please check your DATABASE_URL in the Settings menu.");

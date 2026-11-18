@@ -1,6 +1,6 @@
 import express, { Request, Response } from "express";
 import net from "net";
-import { pool } from "../../db/schema.js";
+import { pool, getDbType } from "../../db/schema.js";
 
 export interface RawBiometricPunch {
   user_pin: string;
@@ -153,62 +153,117 @@ export async function processBiometricPunches(
   }
 
   // Ensure biometric tables exist
-  await dbPool.query(`
-    CREATE TABLE IF NOT EXISTS hr_biometric_devices (
-      id SERIAL PRIMARY KEY,
-      company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
-      device_name TEXT NOT NULL,
-      serial_number TEXT,
-      model TEXT,
-      mac_address TEXT,
-      ip_address TEXT,
-      port INTEGER DEFAULT 4370,
-      comm_key TEXT DEFAULT '0',
-      firmware_platform TEXT,
-      fingerprint_algorithm TEXT,
-      manufacturer TEXT,
-      connection_mode TEXT DEFAULT 'lan_bridge',
-      status TEXT DEFAULT 'offline',
-      last_seen_at TIMESTAMP WITH TIME ZONE,
-      last_sync_at TIMESTAMP WITH TIME ZONE,
-      punches_count INTEGER DEFAULT 0,
-      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    );
+  if (getDbType() === 'mysql') {
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS hr_biometric_devices (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT,
+        device_name VARCHAR(255) NOT NULL,
+        serial_number VARCHAR(191),
+        model VARCHAR(255),
+        mac_address VARCHAR(191),
+        ip_address VARCHAR(191),
+        port INT DEFAULT 4370,
+        comm_key VARCHAR(64) DEFAULT '0',
+        firmware_platform VARCHAR(191),
+        fingerprint_algorithm VARCHAR(191),
+        manufacturer VARCHAR(191),
+        connection_mode VARCHAR(64) DEFAULT 'lan_bridge',
+        status VARCHAR(64) DEFAULT 'offline',
+        last_seen_at DATETIME,
+        last_sync_at DATETIME,
+        punches_count INT DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).catch((e: any) => console.error("Error creating hr_biometric_devices table:", e));
 
-    CREATE TABLE IF NOT EXISTS hr_biometric_punches (
-      id SERIAL PRIMARY KEY,
-      company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
-      device_sn TEXT,
-      device_id INTEGER REFERENCES hr_biometric_devices(id) ON DELETE SET NULL,
-      user_pin TEXT NOT NULL,
-      punch_time TIMESTAMP WITH TIME ZONE NOT NULL,
-      punch_type INTEGER DEFAULT 0,
-      verify_type INTEGER DEFAULT 1,
-      matched_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      sync_status TEXT DEFAULT 'processed',
-      raw_line TEXT,
-      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    );
-  `).catch((e: any) => console.error("Error creating biometric tables:", e));
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS hr_biometric_punches (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT,
+        device_sn VARCHAR(191),
+        device_id INT,
+        user_pin VARCHAR(191) NOT NULL,
+        punch_time DATETIME NOT NULL,
+        punch_type INT DEFAULT 0,
+        verify_type INT DEFAULT 1,
+        matched_user_id INT,
+        sync_status VARCHAR(64) DEFAULT 'processed',
+        raw_line TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).catch((e: any) => console.error("Error creating hr_biometric_punches table:", e));
+  } else {
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS hr_biometric_devices (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        device_name TEXT NOT NULL,
+        serial_number TEXT,
+        model TEXT,
+        mac_address TEXT,
+        ip_address TEXT,
+        port INTEGER DEFAULT 4370,
+        comm_key TEXT DEFAULT '0',
+        firmware_platform TEXT,
+        fingerprint_algorithm TEXT,
+        manufacturer TEXT,
+        connection_mode TEXT DEFAULT 'lan_bridge',
+        status TEXT DEFAULT 'offline',
+        last_seen_at TIMESTAMP WITH TIME ZONE,
+        last_sync_at TIMESTAMP WITH TIME ZONE,
+        punches_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS hr_biometric_punches (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        device_sn TEXT,
+        device_id INTEGER REFERENCES hr_biometric_devices(id) ON DELETE SET NULL,
+        user_pin TEXT NOT NULL,
+        punch_time TIMESTAMP WITH TIME ZONE NOT NULL,
+        punch_type INTEGER DEFAULT 0,
+        verify_type INTEGER DEFAULT 1,
+        matched_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        sync_status TEXT DEFAULT 'processed',
+        raw_line TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `).catch((e: any) => console.error("Error creating biometric tables:", e));
+  }
 
   // Update or register device in hr_biometric_devices
   let deviceDbId: number | null = null;
   if (deviceSn) {
-    const devRes = await dbPool.query(`
-      INSERT INTO hr_biometric_devices (company_id, device_name, serial_number, model, status, last_seen_at, last_sync_at, punches_count)
-      VALUES ($1, $2, $3, $4, 'online', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $5)
-      ON CONFLICT (id) DO UPDATE SET
-        status = 'online',
-        last_seen_at = CURRENT_TIMESTAMP,
-        last_sync_at = CURRENT_TIMESTAMP,
-        punches_count = hr_biometric_devices.punches_count + $5
-      RETURNING id
-    `, [companyId, deviceModel || `ZKTeco (${deviceSn})`, deviceSn, deviceModel || "ZKTeco Hardware", punches.length]).catch(() => null);
-
-    if (devRes?.rows?.[0]) {
-      deviceDbId = devRes.rows[0].id;
-    }
+    try {
+      const existingDev = await dbPool.query(
+        `SELECT id FROM hr_biometric_devices WHERE serial_number = $1 AND company_id = $2 LIMIT 1`,
+        [deviceSn, companyId]
+      );
+      if (existingDev.rows.length > 0) {
+        deviceDbId = existingDev.rows[0].id;
+        await dbPool.query(
+          `UPDATE hr_biometric_devices
+           SET status = 'online', last_seen_at = CURRENT_TIMESTAMP, last_sync_at = CURRENT_TIMESTAMP,
+               punches_count = COALESCE(punches_count, 0) + $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2`,
+          [punches.length, deviceDbId]
+        );
+      } else {
+        const insDev = await dbPool.query(
+          `INSERT INTO hr_biometric_devices (company_id, device_name, serial_number, model, status, last_seen_at, last_sync_at, punches_count)
+           VALUES ($1, $2, $3, $4, 'online', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $5)
+           RETURNING id`,
+          [companyId, deviceModel || `ZKTeco (${deviceSn})`, deviceSn, deviceModel || "ZKTeco Hardware", punches.length]
+        );
+        if (insDev?.rows?.[0]) {
+          deviceDbId = insDev.rows[0].id;
+        }
+      }
+    } catch (_e) {}
   }
 
   // Pre-fetch all active employees for fast matching
@@ -702,13 +757,21 @@ export function createZktecoAdmsRouter(): express.Router {
       console.log(`[ZKTeco ADMS] Handshake from SN: ${sn}, options: ${options}`);
 
       // Register / update device status in db
-      await pool.query(`
-        INSERT INTO hr_biometric_devices (company_id, device_name, serial_number, model, connection_mode, status, last_seen_at)
-        VALUES (1, 'K14 Pro (Cloud ADMS)', $1, 'K14 Pro', 'adms_cloud', 'online', CURRENT_TIMESTAMP)
-        ON CONFLICT (id) DO UPDATE SET
-          status = 'online',
-          last_seen_at = CURRENT_TIMESTAMP
-      `, [sn]).catch(() => {});
+      try {
+        const ex = await pool.query(`SELECT id FROM hr_biometric_devices WHERE serial_number = $1 LIMIT 1`, [sn]);
+        if (ex.rows.length > 0) {
+          await pool.query(
+            `UPDATE hr_biometric_devices SET status = 'online', last_seen_at = CURRENT_TIMESTAMP WHERE id = $1`,
+            [ex.rows[0].id]
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO hr_biometric_devices (company_id, device_name, serial_number, model, connection_mode, status, last_seen_at)
+             VALUES (1, 'K14 Pro (Cloud ADMS)', $1, 'K14 Pro', 'adms_cloud', 'online', CURRENT_TIMESTAMP)`,
+            [sn]
+          );
+        }
+      } catch (_e) {}
 
       // Standard ZKTeco configuration response
       res.setHeader("Content-Type", "text/plain");
