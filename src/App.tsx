@@ -5636,32 +5636,53 @@ export default function App() {
 
   useEffect(() => {
     let consecutiveFailures = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let isUnmounted = false;
+
     const checkConnections = async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       try {
         // Check Unified Backend API Health
-        const apiRes = await fetch('/api/health');
+        const apiRes = await fetch('/api/health', {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
         const text = await apiRes.text();
-        
-        let data;
+
+        let data: any;
         try {
           data = JSON.parse(text);
-        } catch (e) {
+        } catch (_e) {
           if (text.includes("Rate exceeded")) {
             console.warn("System is experiencing high load (Rate Exceeded). Falling back to cached state.");
-            setDbStatus('connected'); // Keep it 'connected' to avoid scary UI
+            setDbStatus('connected');
             consecutiveFailures = 0;
             return;
           }
-          // Only throw if it's really unknown
-          if (text.startsWith("<!doctype html>")) {
-            console.warn("Connection check received HTML (likely proxy fallback). Status remains as is.");
-            consecutiveFailures = 0;
-            return; 
+
+          const trimmedLower = text.trim().toLowerCase();
+          const isHtmlResponse = trimmedLower.startsWith("<!doctype html") || trimmedLower.startsWith("<html");
+          consecutiveFailures++;
+
+          if (isHtmlResponse) {
+            const diagMsg = `Backend API (/api/health) returned HTML (HTTP ${apiRes.status}) instead of JSON — verify the Node.js server (npm start -> node dist/server.cjs) is running rather than static dist/ hosting.`;
+            console.warn(diagMsg);
+            if (consecutiveFailures >= 3) {
+              setDbTargetLabel('Backend Server');
+              setDbErrorMsg(diagMsg);
+              setDbStatus('error');
+            } else if (!isUnmounted) {
+              retryTimer = setTimeout(checkConnections, 4000);
+            }
+            return;
           }
-          throw new Error(`Invalid JSON: ${text.substring(0, 50)}`);
+
+          throw new Error(`HTTP ${apiRes.status}: Invalid JSON from /api/health (${text.substring(0, 60)})`);
         }
-        
-        if (data?.targetDatabase || data?.database) {
+
+        if (data?.targetDatabase || data?.database || data?.dialect) {
           const label = data.dialect === 'mysql' ? 'MySQL' : data.dialect === 'postgres' ? 'Supabase' : (data.targetDatabase || data.database);
           setDbTargetLabel(label);
         }
@@ -5671,26 +5692,42 @@ export default function App() {
           setDbErrorMsg('');
           consecutiveFailures = 0;
         } else if (apiRes.ok && data.dbConnected === false) {
-          setDbErrorMsg(data.error || data.message || 'Database connection failed.');
+          const targetInfo = data.target?.host ? ` [${data.target.host}:${data.target.port || 3306}/${data.target.schema || ''}]` : '';
+          setDbErrorMsg(`${data.error || data.message || 'Database connection failed.'}${targetInfo}`);
           setDbStatus('error');
         } else {
           consecutiveFailures++;
-          if (consecutiveFailures >= 3) {
+          const diagMsg = data?.error || data?.message || `Backend /api/health returned HTTP ${apiRes.status}`;
+          if (consecutiveFailures >= 3 || apiRes.status >= 500) {
+            setDbErrorMsg(diagMsg);
             setDbStatus('error');
+          } else if (!isUnmounted) {
+            retryTimer = setTimeout(checkConnections, 4000);
           }
         }
-      } catch (err) {
+      } catch (err: any) {
+        clearTimeout(timeoutId);
         console.warn("Connection check temporary glitch:", err);
         consecutiveFailures++;
+        const msg = err?.name === 'AbortError'
+          ? 'Backend API (/api/health) timed out after 8s.'
+          : (err?.message || 'Unable to reach /api/health endpoint.');
         if (consecutiveFailures >= 3) {
+          setDbErrorMsg(msg);
           setDbStatus('error');
+        } else if (!isUnmounted) {
+          retryTimer = setTimeout(checkConnections, 4000);
         }
       }
     };
 
     checkConnections();
     const interval = setInterval(checkConnections, 60000);
-    return () => clearInterval(interval);
+    return () => {
+      isUnmounted = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      clearInterval(interval);
+    };
   }, []);
 
   const fetchInitialData = useCallback(async (retries = 5) => {
