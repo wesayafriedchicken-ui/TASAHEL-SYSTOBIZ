@@ -13,10 +13,11 @@ import {
   setDatabaseAvailable,
   getLastDbError,
   setLastDbError,
+  getDbTargetSummary,
   isMysqlConfigured
 } from './dbAdapter.js';
 
-export { pool, dbType, isMysql, isPostgres, getDbType, isDatabaseAvailable, getDatabaseAvailable, getLastDbError };
+export { pool, dbType, isMysql, isPostgres, getDbType, isDatabaseAvailable, getDatabaseAvailable, setDatabaseAvailable, getLastDbError, setLastDbError, getDbTargetSummary };
 
 /**
  * Splits a .sql file cleanly into executable statements (skipping comments & empty statements).
