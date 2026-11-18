@@ -133,7 +133,7 @@ function getSanitizedPgUrl(rawUrl?: string): string | undefined {
 // ============================================================================
 // MYSQL CONFIGURATION & SQL DIALECT TRANSLATOR
 // ============================================================================
-function buildMysqlPoolConfig(): mysql.PoolOptions {
+function buildMysqlPoolConfig(overrideHost?: string): mysql.PoolOptions {
   const parsedPoolMax = process.env.DB_POOL_MAX ? parseInt(process.env.DB_POOL_MAX, 10) : 10;
   const connectionLimit = isNaN(parsedPoolMax) || parsedPoolMax < 1 ? 10 : parsedPoolMax;
 
@@ -141,7 +141,7 @@ function buildMysqlPoolConfig(): mysql.PoolOptions {
     waitForConnections: true,
     connectionLimit,
     queueLimit: 0,
-    connectTimeout: 30000,
+    connectTimeout: 8000,
     decimalNumbers: true,
     charset: 'utf8mb4',
     multipleStatements: false,
@@ -161,7 +161,7 @@ function buildMysqlPoolConfig(): mysql.PoolOptions {
     try {
       const normalized = dbUrl.replace(/^mysql2:\/\//i, 'mysql://').replace(/^mariadb:\/\//i, 'mysql://');
       const parsed = new URL(normalized);
-      baseOpts.host = parsed.hostname || 'localhost';
+      baseOpts.host = overrideHost || parsed.hostname || '127.0.0.1';
       baseOpts.port = parsed.port ? parseInt(parsed.port, 10) : 3306;
       baseOpts.user = decodeURIComponent(parsed.username || 'root');
       baseOpts.password = decodeURIComponent(parsed.password || '');
@@ -176,7 +176,7 @@ function buildMysqlPoolConfig(): mysql.PoolOptions {
     }
   }
 
-  baseOpts.host = process.env.MYSQL_HOST || process.env.DB_HOST || 'localhost';
+  baseOpts.host = overrideHost || process.env.MYSQL_HOST || process.env.DB_HOST || '127.0.0.1';
   baseOpts.port = parseInt(process.env.MYSQL_PORT || process.env.DB_PORT || '3306', 10) || 3306;
   baseOpts.user = process.env.MYSQL_USER || process.env.DB_USER || 'root';
   baseOpts.password = process.env.MYSQL_PASSWORD ?? process.env.DB_PASSWORD ?? '';
@@ -186,6 +186,31 @@ function buildMysqlPoolConfig(): mysql.PoolOptions {
   }
   return baseOpts;
 }
+
+export function getDbTargetSummary(): { host?: string; port?: number; database?: string } {
+  if (dbType === 'mysql') {
+    const cfg = buildMysqlPoolConfig(activeMysqlHost || undefined);
+    return {
+      host: cfg.host,
+      port: cfg.port,
+      database: cfg.database,
+    };
+  }
+  try {
+    const urlStr = getSanitizedPgUrl(process.env.DATABASE_URL);
+    if (urlStr) {
+      const u = new URL(urlStr);
+      return {
+        host: u.hostname,
+        port: u.port ? parseInt(u.port, 10) : 5432,
+        database: u.pathname.replace(/^\//, '') || 'postgres',
+      };
+    }
+  } catch (_e) {}
+  return {};
+}
+
+let activeMysqlHost: string | null = null;
 
 /**
  * Splits a SQL query into tokens, separating single-quoted string literals from SQL code
@@ -740,27 +765,102 @@ async function executeMysqlQuery(
   };
 }
 
-// ============================================================================
-// BUILD UNIFIED POOL (POSTGRESQL OR MYSQL)
-// ============================================================================
+function isMysqlConnectionError(err: any): boolean {
+  const errCode = err?.code || '';
+  const errMsg = (err?.message || '').toLowerCase();
+  return (
+    errCode === 'ECONNREFUSED' ||
+    errCode === 'ENOTFOUND' ||
+    errCode === 'ETIMEDOUT' ||
+    errCode === 'ENOENT' ||
+    errCode === 'EAI_AGAIN' ||
+    errCode === 'ECONNRESET' ||
+    errCode === 'PROTOCOL_CONNECTION_LOST' ||
+    errCode === 'PROTOCOL_SEQUENCE_TIMEOUT' ||
+    errCode === 'PROTOCOL_PACKETS_OUT_OF_ORDER' ||
+    errCode === 'ER_ACCESS_DENIED_ERROR' ||
+    errCode === 'ER_DBACCESS_DENIED_ERROR' ||
+    errCode === 'ER_BAD_DB_ERROR' ||
+    errCode === 'ER_NOT_SUPPORTED_AUTH_MODE' ||
+    errMsg.includes('connect etimedout') ||
+    errMsg.includes('connect econnrefused') ||
+    errMsg.includes('access denied')
+  );
+}
+
+function getMysqlHostFallback(currentHost?: string): string | null {
+  const h = (currentHost || '').toLowerCase().trim();
+  const dbHost = (process.env.DB_HOST || '').trim();
+  if (h === 'localhost') {
+    if (dbHost && dbHost.toLowerCase() !== 'localhost') return dbHost;
+    return '127.0.0.1';
+  }
+  if (h === '127.0.0.1') {
+    return 'localhost';
+  }
+  if (dbHost && dbHost.toLowerCase() !== h) {
+    return dbHost;
+  }
+  return null;
+}
+
+function attachMysqlSessionListeners(targetPool: mysql.Pool) {
+  // Ensure session sql_mode supports PIPES_AS_CONCAT gently without producing leading commas
+  targetPool.on('connection', (conn) => {
+    conn.query(
+      "SET SESSION sql_mode = IF(FIND_IN_SET('PIPES_AS_CONCAT', @@sql_mode) > 0, @@sql_mode, CONCAT_WS(',', NULLIF(@@sql_mode, ''), 'PIPES_AS_CONCAT'))",
+      () => {}
+    );
+  });
+}
+
 function createUnifiedPool(): UnifiedDbPool {
   if (dbType === 'mysql') {
-    const mysqlConfig = buildMysqlPoolConfig();
-    console.log(`🐬 Active DB Dialect: MySQL (${mysqlConfig.user}@${mysqlConfig.host}:${mysqlConfig.port}/${mysqlConfig.database})`);
-    const mysqlPool = mysql.createPool(mysqlConfig);
+    let currentConfig = buildMysqlPoolConfig();
+    activeMysqlHost = currentConfig.host || '127.0.0.1';
+    console.log(`🐬 Active DB Dialect: MySQL (${currentConfig.user}@${currentConfig.host}:${currentConfig.port}/${currentConfig.database})`);
+    let mysqlPool = mysql.createPool(currentConfig);
+    attachMysqlSessionListeners(mysqlPool);
 
-    // Ensure session sql_mode supports PIPES_AS_CONCAT gently without producing leading commas
-    mysqlPool.on('connection', (conn) => {
-      conn.query(
-        "SET SESSION sql_mode = IF(FIND_IN_SET('PIPES_AS_CONCAT', @@sql_mode) > 0, @@sql_mode, CONCAT_WS(',', NULLIF(@@sql_mode, ''), 'PIPES_AS_CONCAT'))",
-        () => {}
-      );
-    });
+    const trySwitchMysqlHost = async (err: any): Promise<boolean> => {
+      const code = err?.code || '';
+      if (
+        code !== 'ENOENT' &&
+        code !== 'ECONNREFUSED' &&
+        code !== 'ETIMEDOUT' &&
+        code !== 'EAI_AGAIN' &&
+        code !== 'ENOTFOUND' &&
+        code !== 'PROTOCOL_SEQUENCE_TIMEOUT'
+      ) {
+        return false;
+      }
+      const nextHost = getMysqlHostFallback(currentConfig.host);
+      if (!nextHost) return false;
+
+      const prevHost = currentConfig.host;
+      const nextConfig = buildMysqlPoolConfig(nextHost);
+      const candidatePool = mysql.createPool(nextConfig);
+      try {
+        await candidatePool.query('SELECT 1');
+        attachMysqlSessionListeners(candidatePool);
+        const oldPool = mysqlPool;
+        mysqlPool = candidatePool;
+        currentConfig = nextConfig;
+        activeMysqlHost = nextHost;
+        oldPool.end().catch(() => {});
+        console.log(`🔄 MySQL switched host fallback (${prevHost} -> ${nextHost}) and connected cleanly!`);
+        return true;
+      } catch (_fallbackErr) {
+        candidatePool.end().catch(() => {});
+        return false;
+      }
+    };
 
     const wrappedPool: UnifiedDbPool = {
       query: async (text: string | pg.QueryConfig, params?: any[]): Promise<UnifiedQueryResult> => {
         if (!isMysqlConfigured()) {
           lastDbError = 'MySQL environment variables are not configured';
+          isDatabaseAvailable = false;
           return { rows: [], rowCount: 0, command: 'SELECT' };
         }
         try {
@@ -769,18 +869,23 @@ function createUnifiedPool(): UnifiedDbPool {
           lastDbError = null;
           return res;
         } catch (err: any) {
+          // Try localhost <-> 127.0.0.1 host fallback before marking offline
+          if (await trySwitchMysqlHost(err)) {
+            try {
+              const retryRes = await executeMysqlQuery(mysqlPool, text, params || []);
+              isDatabaseAvailable = true;
+              lastDbError = null;
+              return retryRes;
+            } catch (retryErr: any) {
+              err = retryErr;
+            }
+          }
+
           const errCode = err?.code;
           const errMsg = err?.message || '';
-          if (
-            errCode === 'ECONNREFUSED' ||
-            errCode === 'ENOTFOUND' ||
-            errCode === 'ETIMEDOUT' ||
-            errCode === 'PROTOCOL_CONNECTION_LOST' ||
-            errCode === 'ER_ACCESS_DENIED_ERROR' ||
-            errCode === 'ER_BAD_DB_ERROR'
-          ) {
+          if (isMysqlConnectionError(err)) {
             isDatabaseAvailable = false;
-            lastDbError = `${errCode}: ${errMsg}`;
+            lastDbError = `${errCode || 'CONN_ERR'}: ${errMsg}`;
             console.warn(`⚠️ MySQL connection issue (${errCode || errMsg}) — returning empty fallback.`);
             return { rows: [], rowCount: 0, command: 'SELECT' };
           }
@@ -790,7 +895,22 @@ function createUnifiedPool(): UnifiedDbPool {
         }
       },
       connect: async (): Promise<UnifiedDbClient> => {
-        const conn = await mysqlPool.getConnection();
+        let conn: mysql.PoolConnection;
+        try {
+          conn = await mysqlPool.getConnection();
+        } catch (err: any) {
+          if (await trySwitchMysqlHost(err)) {
+            conn = await mysqlPool.getConnection();
+          } else {
+            if (isMysqlConnectionError(err)) {
+              isDatabaseAvailable = false;
+              lastDbError = `${err?.code || 'CONN_ERR'}: ${err?.message || ''}`;
+            }
+            throw err;
+          }
+        }
+        isDatabaseAvailable = true;
+        lastDbError = null;
         return {
           query: async (text: string | pg.QueryConfig, params?: any[]) => {
             return executeMysqlQuery(conn, text, params || []);
