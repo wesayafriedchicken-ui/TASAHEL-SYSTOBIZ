@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config({ override: true });
+dotenv.config();
 import fs from 'fs';
 import path from 'path';
 import {
@@ -9,11 +9,14 @@ import {
   isPostgres,
   getDbType,
   isDatabaseAvailable,
+  getDatabaseAvailable,
   setDatabaseAvailable,
+  getLastDbError,
+  setLastDbError,
   isMysqlConfigured
 } from './dbAdapter.js';
 
-export { pool, dbType, isMysql, isPostgres, getDbType, isDatabaseAvailable };
+export { pool, dbType, isMysql, isPostgres, getDbType, isDatabaseAvailable, getDatabaseAvailable, getLastDbError };
 
 /**
  * Splits a .sql file cleanly into executable statements (skipping comments & empty statements).
@@ -106,11 +109,13 @@ export async function initDatabase() {
       client = await pool.connect();
       console.log(`✅ Connected to ${isMysql ? 'MySQL' : 'PostgreSQL'}`);
       setDatabaseAvailable(true);
+      setLastDbError(null);
       break;
     } catch (err) {
       retries--;
       const errCode = (err as any)?.code;
       const errMsg = (err as Error)?.message || '';
+      setLastDbError(`${errCode || 'DB_ERR'}: ${errMsg}`);
       console.error(`❌ Database connection attempt failed: ${errMsg}`);
 
       if (errCode === '28P01' || errCode === 'ER_ACCESS_DENIED_ERROR' || errMsg.includes('SASL') || errMsg.includes('password authentication')) {
@@ -155,9 +160,14 @@ export async function initDatabase() {
       );
 
       if (usersCheck.rows.length === 0) {
-        const schemaPath = path.resolve(process.cwd(), 'server', 'db', 'schema.mysql.sql');
-        if (fs.existsSync(schemaPath)) {
-          console.log('🛠️ Bootstrapping fresh MySQL database from server/db/schema.mysql.sql...');
+        const candidatePaths = [
+          path.resolve(process.cwd(), 'server', 'db', 'schema.mysql.sql'),
+          path.resolve(process.cwd(), 'schema.mysql.sql'),
+          path.resolve(process.cwd(), 'dist', 'schema.mysql.sql'),
+        ];
+        const schemaPath = candidatePaths.find((p) => fs.existsSync(p));
+        if (schemaPath) {
+          console.log(`🛠️ Bootstrapping fresh MySQL database from ${schemaPath}...`);
           const rawSql = fs.readFileSync(schemaPath, 'utf-8');
           const statements = splitSqlStatements(rawSql);
           for (const stmt of statements) {
