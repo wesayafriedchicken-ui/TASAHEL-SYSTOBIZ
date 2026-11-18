@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config({ override: true });
+dotenv.config();
 import pg from 'pg';
 import mysql from 'mysql2/promise';
 import crypto from 'crypto';
@@ -17,12 +17,18 @@ export function detectDbDialect(): DbDialect {
   if (dbUrl.startsWith('mysql://') || dbUrl.startsWith('mysql2://') || dbUrl.startsWith('mariadb://')) {
     return 'mysql';
   }
-  if (dbUrl.startsWith('postgres://') || dbUrl.startsWith('postgresql://')) {
-    return 'postgres';
+
+  // Prioritize explicit MySQL / DB host vars over a fallback/stale postgres DATABASE_URL
+  if (
+    process.env.MYSQL_HOST ||
+    process.env.MYSQL_DATABASE ||
+    (process.env.DB_HOST && (process.env.DB_DATABASE || process.env.DB_NAME))
+  ) {
+    return 'mysql';
   }
 
-  if (process.env.MYSQL_HOST || process.env.MYSQL_DATABASE) {
-    return 'mysql';
+  if (dbUrl.startsWith('postgres://') || dbUrl.startsWith('postgresql://')) {
+    return 'postgres';
   }
 
   return 'postgres';
@@ -60,11 +66,31 @@ export interface UnifiedDbPool {
 // Track live database availability
 export let isDatabaseAvailable = Boolean(
   process.env.DATABASE_URL ||
-  (isMysql && (process.env.MYSQL_HOST || process.env.MYSQL_DATABASE))
+  (isMysql && (
+    process.env.MYSQL_HOST ||
+    process.env.MYSQL_DATABASE ||
+    process.env.DB_HOST ||
+    process.env.DB_DATABASE ||
+    process.env.DB_NAME
+  ))
 );
+
+export let lastDbError: string | null = null;
 
 export function setDatabaseAvailable(val: boolean) {
   isDatabaseAvailable = val;
+}
+
+export function getDatabaseAvailable(): boolean {
+  return isDatabaseAvailable;
+}
+
+export function setLastDbError(err: string | null) {
+  lastDbError = err;
+}
+
+export function getLastDbError(): string | null {
+  return lastDbError;
 }
 
 // ============================================================================
@@ -154,7 +180,7 @@ function buildMysqlPoolConfig(): mysql.PoolOptions {
   baseOpts.port = parseInt(process.env.MYSQL_PORT || process.env.DB_PORT || '3306', 10) || 3306;
   baseOpts.user = process.env.MYSQL_USER || process.env.DB_USER || 'root';
   baseOpts.password = process.env.MYSQL_PASSWORD ?? process.env.DB_PASSWORD ?? '';
-  baseOpts.database = process.env.MYSQL_DATABASE || process.env.DB_NAME || 'systo_biz';
+  baseOpts.database = process.env.MYSQL_DATABASE || process.env.DB_DATABASE || process.env.DB_NAME || 'systo_biz';
   if (process.env.MYSQL_SSL === 'true') {
     baseOpts.ssl = { rejectUnauthorized: false };
   }
@@ -720,21 +746,27 @@ async function executeMysqlQuery(
 function createUnifiedPool(): UnifiedDbPool {
   if (dbType === 'mysql') {
     const mysqlConfig = buildMysqlPoolConfig();
+    console.log(`🐬 Active DB Dialect: MySQL (${mysqlConfig.user}@${mysqlConfig.host}:${mysqlConfig.port}/${mysqlConfig.database})`);
     const mysqlPool = mysql.createPool(mysqlConfig);
 
-    // Ensure session sql_mode supports PIPES_AS_CONCAT gently if permitted
+    // Ensure session sql_mode supports PIPES_AS_CONCAT gently without producing leading commas
     mysqlPool.on('connection', (conn) => {
-      conn.query("SET SESSION sql_mode = CONCAT(@@sql_mode, ',PIPES_AS_CONCAT')", () => {});
+      conn.query(
+        "SET SESSION sql_mode = IF(FIND_IN_SET('PIPES_AS_CONCAT', @@sql_mode) > 0, @@sql_mode, CONCAT_WS(',', NULLIF(@@sql_mode, ''), 'PIPES_AS_CONCAT'))",
+        () => {}
+      );
     });
 
     const wrappedPool: UnifiedDbPool = {
       query: async (text: string | pg.QueryConfig, params?: any[]): Promise<UnifiedQueryResult> => {
         if (!isMysqlConfigured()) {
+          lastDbError = 'MySQL environment variables are not configured';
           return { rows: [], rowCount: 0, command: 'SELECT' };
         }
         try {
           const res = await executeMysqlQuery(mysqlPool, text, params || []);
           isDatabaseAvailable = true;
+          lastDbError = null;
           return res;
         } catch (err: any) {
           const errCode = err?.code;
@@ -744,9 +776,11 @@ function createUnifiedPool(): UnifiedDbPool {
             errCode === 'ENOTFOUND' ||
             errCode === 'ETIMEDOUT' ||
             errCode === 'PROTOCOL_CONNECTION_LOST' ||
-            errCode === 'ER_ACCESS_DENIED_ERROR'
+            errCode === 'ER_ACCESS_DENIED_ERROR' ||
+            errCode === 'ER_BAD_DB_ERROR'
           ) {
             isDatabaseAvailable = false;
+            lastDbError = `${errCode}: ${errMsg}`;
             console.warn(`⚠️ MySQL connection issue (${errCode || errMsg}) — returning empty fallback.`);
             return { rows: [], rowCount: 0, command: 'SELECT' };
           }
@@ -909,7 +943,10 @@ export function isMysqlConfigured(): boolean {
     dbUrl.startsWith('mysql2://') ||
     dbUrl.startsWith('mariadb://') ||
     process.env.MYSQL_HOST ||
-    process.env.MYSQL_DATABASE
+    process.env.MYSQL_DATABASE ||
+    process.env.DB_HOST ||
+    process.env.DB_DATABASE ||
+    process.env.DB_NAME
   );
 }
 
