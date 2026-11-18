@@ -769,7 +769,7 @@ const Sidebar = ({
   );
 };
 
-const Header = ({ title, status }: { title: string, status: 'connecting' | 'connected' | 'error' }) => {
+const Header = ({ title, status, dbLabel }: { title: string, status: 'connecting' | 'connected' | 'error', dbLabel?: string }) => {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -964,7 +964,7 @@ const Header = ({ title, status }: { title: string, status: 'connecting' | 'conn
             status === 'connected' ? "bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]" :
             status === 'connecting' ? "bg-amber-500" : "bg-rose-500"
           )} />
-          {status === 'connected' ? 'Cloud Sync Active (Supabase)' : status === 'connecting' ? 'Linking Cloud...' : 'Local Tank Mode (Sync Lost)'}
+          {status === 'connected' ? `Cloud Sync Active (${dbLabel || 'Database'})` : status === 'connecting' ? 'Linking Database...' : 'Database Offline (Local Mode)'}
         </div>
       </div>
       <div className="flex items-center gap-6">
@@ -5606,6 +5606,8 @@ export default function App() {
   };
 
   const [dbStatus, setDbStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [dbTargetLabel, setDbTargetLabel] = useState<string>('Database');
+  const [dbErrorMsg, setDbErrorMsg] = useState<string>('');
   const location = useLocation();
   const navigate = useNavigate();
   const activeModule = useMemo(() => {
@@ -5659,9 +5661,18 @@ export default function App() {
           throw new Error(`Invalid JSON: ${text.substring(0, 50)}`);
         }
         
-        if (apiRes.ok && data.status === 'connected') {
+        if (data?.targetDatabase || data?.database) {
+          const label = data.dialect === 'mysql' ? 'MySQL' : data.dialect === 'postgres' ? 'Supabase' : (data.targetDatabase || data.database);
+          setDbTargetLabel(label);
+        }
+
+        if (apiRes.ok && data.status === 'connected' && data.dbConnected !== false) {
           setDbStatus('connected');
+          setDbErrorMsg('');
           consecutiveFailures = 0;
+        } else if (apiRes.ok && data.dbConnected === false) {
+          setDbErrorMsg(data.error || data.message || 'Database connection failed.');
+          setDbStatus('error');
         } else {
           consecutiveFailures++;
           if (consecutiveFailures >= 3) {
@@ -5957,8 +5968,12 @@ export default function App() {
             <div className="flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 animate-bounce" />
               <div>
-                <p className="font-bold">Database Disconnected</p>
-                <p className="text-xs text-rose-100">Synchronizing with Supabase failed. Please check DATABASE_URL in .env and your internet connection.</p>
+                <p className="font-bold">Database Disconnected ({dbTargetLabel})</p>
+                <p className="text-xs text-rose-100">
+                  {dbErrorMsg
+                    ? `Connection to ${dbTargetLabel} failed: ${dbErrorMsg}`
+                    : `Synchronizing with ${dbTargetLabel} failed. Please check your database environment variables (DB_TYPE, DATABASE_URL / MYSQL_HOST) and restart the server.`}
+                </p>
               </div>
             </div>
             <button 
@@ -6003,6 +6018,7 @@ export default function App() {
         <Header 
           title={MODULES.find(m => m.id === activeModule)?.name || systemModules.find(m => m.id === activeModule)?.name || 'Home'} 
           status={dbStatus}
+          dbLabel={dbTargetLabel}
         />
         
         {/* Real-time Notifications Bar */}
