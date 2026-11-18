@@ -37,6 +37,10 @@ export function getSupabaseAdmin(): SupabaseClient {
  */
 export async function ensureStorageBucket(bucket = BUCKET_NAME): Promise<void> {
   try {
+    const currentKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+    if (!currentKey) {
+      return;
+    }
     const supabase = getSupabaseAdmin();
     const { data: buckets, error: listError } = await supabase.storage.listBuckets();
     if (listError) {
