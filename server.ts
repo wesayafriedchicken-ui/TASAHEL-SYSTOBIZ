@@ -1,11 +1,10 @@
 import dotenv from "dotenv";
 dotenv.config();
 import express, { Request, Response, NextFunction } from "express";
-import { createServer as createViteServer } from "vite";
+import fs from "fs";
 import http from "http";
 import { WebSocketServer } from "ws";
 import path from "path";
-import { fileURLToPath } from "url";
 import { initDatabase } from "./server/db/schema.js";
 import { authenticate } from "./server/middleware/auth.js";
 import authRoutes from "./server/modules/auth/auth.routes.js";
@@ -38,20 +37,10 @@ import meetingsRoutes from "./server/modules/meetings/meetings.routes.js";
 import storageRoutes from "./server/modules/storage/storage.routes.js";
 import mobileRoutes from "./server/modules/mobile/mobile.routes.js";
 import { createZktecoAdmsRouter } from "./server/modules/hr/zkteco.routes.js";
-import { pool, isDatabaseAvailable, getDbType, getDatabaseAvailable, getLastDbError } from "./server/db/schema.js";
+import { pool, isDatabaseAvailable, getDbType, getDatabaseAvailable, setDatabaseAvailable, getLastDbError, setLastDbError, getDbTargetSummary } from "./server/db/schema.js";
 import { automationService } from "./server/services/automation.service.js";
 import { NotificationService } from "./server/services/notification.service.js";
 import { IntegrationService } from "./server/services/integration.service.js";
-
-// Safely define __filename and __dirname for ESM/CJS compatibility
-let __filename = "";
-let __dirname = "";
-try {
-  __filename = fileURLToPath(import.meta.url);
-  __dirname = path.dirname(__filename);
-} catch (e) {
-  // In CommonJS or bundled environments, these are already available or handled gracefully
-}
 
 // Prevent unhandled promise rejections or exceptions from terminating the server process
 process.on('unhandledRejection', (reason, promise) => {
@@ -264,21 +253,43 @@ async function startServer() {
   app.get("/api/health", async (req, res) => {
     const dialect = getDbType();
     const dbLabel = dialect === "mysql" ? "MySQL/MariaDB" : "PostgreSQL/Supabase";
+    const target = getDbTargetSummary();
     let dbConnected = false;
+    let probeError: string | null = null;
+
     try {
-      const checkRes = await pool.query("SELECT 1 as ok");
-      dbConnected = Boolean(checkRes && Array.isArray(checkRes.rows) && checkRes.rows.length > 0 && getDatabaseAvailable());
-    } catch (_e) {
+      const checkRes = await Promise.race([
+        pool.query("SELECT 1 as ok"),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("HEALTH_TIMEOUT: Database ping timed out after 4s")), 4000)
+        ),
+      ]);
+      if (checkRes && Array.isArray(checkRes.rows) && checkRes.rows.length > 0 && getDatabaseAvailable()) {
+        dbConnected = true;
+        setDatabaseAvailable(true);
+        setLastDbError(null);
+      }
+    } catch (e: any) {
       dbConnected = false;
+      probeError = e?.message || "Database ping failed";
     }
-    const lastError = getLastDbError();
+
+    const lastError = probeError || getLastDbError();
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     res.json({
       status: dbConnected ? "connected" : "disconnected",
       dbConnected,
       dialect,
       database: dbConnected ? dbLabel : "sandbox",
       targetDatabase: dbLabel,
-      error: dbConnected ? null : (lastError || (dialect === "mysql" ? "MySQL connection unavailable" : "PostgreSQL/Supabase connection unavailable")),
+      target: {
+        host: target.host || null,
+        port: target.port || null,
+        schema: target.database || null,
+      },
+      error: dbConnected
+        ? null
+        : (lastError || (dialect === "mysql" ? "MySQL connection unavailable" : "PostgreSQL/Supabase connection unavailable")),
       message: dbConnected ? `Database connected (${dbLabel})` : `Database disconnected (${dbLabel}).`,
       time: new Date().toISOString()
     });
@@ -354,8 +365,22 @@ async function startServer() {
     next(err);
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  // Serve production static dist/ when NODE_ENV=production or running compiled server.cjs bundle
+  const entryScript = process.argv[1] || "";
+  const isBundledCjs = /\.c?js$/i.test(entryScript) && !entryScript.endsWith("server.ts");
+  const distCandidates = [
+    path.join(process.cwd(), "dist"),
+    path.resolve(path.dirname(entryScript || process.cwd())),
+    path.resolve(path.dirname(entryScript || process.cwd()), "dist"),
+  ];
+  const distPath =
+    distCandidates.find((p) => fs.existsSync(path.join(p, "index.html"))) ||
+    path.join(process.cwd(), "dist");
+  const hasBuiltDist = fs.existsSync(path.join(distPath, "index.html"));
+  const isProduction = process.env.NODE_ENV === "production" || (isBundledCjs && hasBuiltDist);
+
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { 
         middlewareMode: true,
@@ -365,7 +390,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    console.log(`📦 Serving production build from ${distPath}`);
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
