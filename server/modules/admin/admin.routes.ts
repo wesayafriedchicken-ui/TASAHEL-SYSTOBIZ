@@ -15,6 +15,8 @@ export default function adminRoutes() {
 
   router.get("/roles", checkPermission('Admin', 'view'), adminController.getRoles);
   router.post("/roles", checkPermission('Admin', 'create'), adminController.createRole);
+  router.patch("/roles/:id", checkPermission('Admin', 'edit'), adminController.updateRole);
+  router.put("/roles/:id", checkPermission('Admin', 'edit'), adminController.updateRole);
   router.patch("/roles/:id/permissions", checkPermission('Admin', 'edit'), adminController.updateRolePermissions);
   router.delete("/roles/:id", checkPermission('Admin', 'delete'), adminController.deleteRole);
 
