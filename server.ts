@@ -365,21 +365,25 @@ async function startServer() {
     next(err);
   });
 
-  // Serve production static dist/ when NODE_ENV=production or running compiled server.cjs bundle
+  // Serve production static dist/ whenever running compiled bundle or NODE_ENV=production
+  // Only launch Vite dev middleware when explicitly running `tsx server.ts` in non-production dev mode.
   const entryScript = process.argv[1] || "";
-  const isBundledCjs = /\.c?js$/i.test(entryScript) && !entryScript.endsWith("server.ts");
+  const isDevTsx =
+    process.env.NODE_ENV !== "production" &&
+    process.argv.some((arg) => typeof arg === "string" && arg.endsWith("server.ts"));
+  const cjsDir = typeof __dirname !== "undefined" ? __dirname : "";
   const distCandidates = [
     path.join(process.cwd(), "dist"),
-    path.resolve(path.dirname(entryScript || process.cwd())),
-    path.resolve(path.dirname(entryScript || process.cwd()), "dist"),
-  ];
+    cjsDir,
+    cjsDir ? path.resolve(cjsDir, "dist") : "",
+    entryScript ? path.resolve(path.dirname(entryScript)) : "",
+    entryScript ? path.resolve(path.dirname(entryScript), "dist") : "",
+  ].filter(Boolean);
   const distPath =
     distCandidates.find((p) => fs.existsSync(path.join(p, "index.html"))) ||
     path.join(process.cwd(), "dist");
-  const hasBuiltDist = fs.existsSync(path.join(distPath, "index.html"));
-  const isProduction = process.env.NODE_ENV === "production" || (isBundledCjs && hasBuiltDist);
 
-  if (!isProduction) {
+  if (isDevTsx) {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { 
@@ -393,7 +397,12 @@ async function startServer() {
     console.log(`📦 Serving production build from ${distPath}`);
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      const indexFile = path.join(distPath, "index.html");
+      if (fs.existsSync(indexFile)) {
+        res.sendFile(indexFile);
+      } else {
+        res.status(503).send("Production frontend build (dist/index.html) not found. Please run `npm run build`.");
+      }
     });
   }
 
