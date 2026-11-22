@@ -1962,18 +1962,46 @@ export default function hrRoutes(wss: any) {
         WHERE id = $11 AND (company_id = $12 OR company_id IS NULL)
       `, [effectiveName, effectiveEmail, resolvedDeptId, effectiveJobTitle, userStatus, targetReportingToId, effectiveAvatarUrl, effectiveRoleId, hasPortalAccess, effectiveEmpCode, targetUserId, companyId, effectiveTeamName]);
 
-      const effectiveSalaryBase = salary_base !== undefined ? salary_base : (existing.salary_base || 0);
-      const effectiveAllowances = allowances !== undefined ? allowances : (existing.allowances || 0);
+      const safeParseJsonField = <T>(val: any, fallback: T): T => {
+        if (val === null || val === undefined) return fallback;
+        if (typeof val === 'string') {
+          const trimmed = val.trim();
+          if (!trimmed) return fallback;
+          try {
+            const parsed = JSON.parse(trimmed);
+            return parsed !== null && parsed !== undefined ? parsed : fallback;
+          } catch {
+            return fallback;
+          }
+        }
+        return val as T;
+      };
+      const safeNum = (val: any, fallback = 0): number => {
+        if (val === null || val === undefined || val === '') return fallback;
+        const n = typeof val === 'number' ? val : parseFloat(String(val));
+        return Number.isFinite(n) ? n : fallback;
+      };
+
+      const effectiveSalaryBase = salary_base !== undefined ? safeNum(salary_base, 0) : safeNum(existing.salary_base, 0);
+      const effectiveAllowances = allowances !== undefined ? safeNum(allowances, 0) : safeNum(existing.allowances, 0);
       const effectiveContractType = contract_type !== undefined ? contract_type : (existing.contract_type || 'Full-time');
       const effectivePhone = phone !== undefined ? phone : existing.phone;
       const effectiveContractStartDate = formatDbDate(contract_start_date !== undefined ? contract_start_date : existing.contract_start_date);
       const effectiveContractEndDate = formatDbDate(contract_end_date !== undefined ? contract_end_date : existing.contract_end_date);
-      const effectiveVacationBalance = vacation_balance !== undefined ? vacation_balance : (existing.vacation_balance || 21);
-      const effectiveJoinedAt = joined_at !== undefined ? joined_at : existing.joined_at;
+      const effectiveVacationBalance = vacation_balance !== undefined ? safeNum(vacation_balance, 21) : safeNum(existing.vacation_balance, 21);
+      const rawJoinedAt = joined_at !== undefined ? joined_at : existing.joined_at;
+      const effectiveJoinedAt = rawJoinedAt instanceof Date && !Number.isNaN(rawJoinedAt.getTime())
+        ? rawJoinedAt
+        : (typeof rawJoinedAt === 'string' && rawJoinedAt.trim() === ''
+            ? null
+            : (formatDbDate(rawJoinedAt) || null));
       const effectiveAttendanceMethod = attendance_method !== undefined ? attendance_method : (existing.attendance_method || 'Login System');
-      const effectiveAssignedShiftId = req.body.assigned_shift_id !== undefined ? (req.body.assigned_shift_id ? parseInt(req.body.assigned_shift_id, 10) : null) : (existing.assigned_shift_id || null);
+      const parsedShiftId = req.body.assigned_shift_id !== undefined
+        ? (req.body.assigned_shift_id !== null && req.body.assigned_shift_id !== '' ? parseInt(String(req.body.assigned_shift_id), 10) : null)
+        : (existing.assigned_shift_id ?? null);
+      const effectiveAssignedShiftId = parsedShiftId !== null && Number.isFinite(parsedShiftId) ? parsedShiftId : null;
 
-      let effectiveDocuments = documents !== undefined ? documents : (existing.documents || []);
+      let effectiveDocuments = documents !== undefined ? safeParseJsonField(documents, []) : safeParseJsonField(existing.documents, []);
       if (Array.isArray(effectiveDocuments)) {
         for (const d of effectiveDocuments) {
           if (d && d.url && typeof d.url === 'string' && d.url.startsWith('data:')) {
@@ -1986,20 +2014,20 @@ export default function hrRoutes(wss: any) {
           }
         }
       }
-      const effectivePenaltyHistory = penalty_history !== undefined ? penalty_history : (existing.penalty_history || []);
-      let effectiveJobInfos = job_informations !== undefined ? job_informations : (existing.job_informations || []);
+      const effectivePenaltyHistory = penalty_history !== undefined ? safeParseJsonField(penalty_history, []) : safeParseJsonField(existing.penalty_history, []);
+      let effectiveJobInfos = job_informations !== undefined ? safeParseJsonField(job_informations, []) : safeParseJsonField(existing.job_informations, []);
       if (reporting_to === null) {
         if (Array.isArray(effectiveJobInfos)) {
           effectiveJobInfos = effectiveJobInfos.map((ji: any) => ({ ...ji, reportingTo: '' }));
         }
       }
-      const effectiveCompensations = compensations !== undefined ? compensations : (existing.compensations || []);
-      const effectiveBonusesList = bonuses_list !== undefined ? bonuses_list : (existing.bonuses_list || []);
-      const effectiveCommissionsList = commissions_list !== undefined ? commissions_list : (existing.commissions_list || []);
-      const effectiveEquitiesList = equities_list !== undefined ? equities_list : (existing.equities_list || []);
-      const effectiveShiftAllowancesList = shift_allowances_list !== undefined ? shift_allowances_list : (existing.shift_allowances_list || []);
-      const effectivePotentialBonus = potential_bonus !== undefined ? potential_bonus : (existing.potential_bonus || {});
-      const effectiveEmploymentStatuses = employment_statuses !== undefined ? employment_statuses : (existing.employment_statuses || []);
+      const effectiveCompensations = compensations !== undefined ? safeParseJsonField(compensations, []) : safeParseJsonField(existing.compensations, []);
+      const effectiveBonusesList = bonuses_list !== undefined ? safeParseJsonField(bonuses_list, []) : safeParseJsonField(existing.bonuses_list, []);
+      const effectiveCommissionsList = commissions_list !== undefined ? safeParseJsonField(commissions_list, []) : safeParseJsonField(existing.commissions_list, []);
+      const effectiveEquitiesList = equities_list !== undefined ? safeParseJsonField(equities_list, []) : safeParseJsonField(existing.equities_list, []);
+      const effectiveShiftAllowancesList = shift_allowances_list !== undefined ? safeParseJsonField(shift_allowances_list, []) : safeParseJsonField(existing.shift_allowances_list, []);
+      const effectivePotentialBonus = potential_bonus !== undefined ? safeParseJsonField(potential_bonus, {}) : safeParseJsonField(existing.potential_bonus, {});
+      const effectiveEmploymentStatuses = employment_statuses !== undefined ? safeParseJsonField(employment_statuses, []) : safeParseJsonField(existing.employment_statuses, []);
 
       const effectiveGender = req.body.gender !== undefined ? req.body.gender : (personal_info?.gender || existing.gender);
       const effectiveNationality = req.body.nationality !== undefined ? req.body.nationality : (personal_info?.nationality || existing.nationality);
@@ -2042,22 +2070,22 @@ export default function hrRoutes(wss: any) {
 
       const effectiveManagerName = req.body.manager_name !== undefined ? req.body.manager_name : (reporting_to === null ? null : (personal_info?.manager_name || existing.manager_name));
 
-      const effectivePotentialBonusPercent = req.body.potential_bonus?.percent !== undefined ? parseFloat(req.body.potential_bonus.percent) : (existing.potential_bonus_percent || 0);
-      const effectivePotentialBonusAmount = req.body.potential_bonus?.amount !== undefined ? parseFloat(req.body.potential_bonus.amount) : (existing.potential_bonus_amount || 0);
+      const effectivePotentialBonusPercent = req.body.potential_bonus?.percent !== undefined ? safeNum(req.body.potential_bonus.percent, 0) : safeNum(existing.potential_bonus_percent, 0);
+      const effectivePotentialBonusAmount = req.body.potential_bonus?.amount !== undefined ? safeNum(req.body.potential_bonus.amount, 0) : safeNum(existing.potential_bonus_amount, 0);
 
-      const effectiveKpiAmount = req.body.kpi_amount !== undefined ? parseFloat(req.body.kpi_amount) : (existing.kpi_amount || 0);
+      const effectiveKpiAmount = req.body.kpi_amount !== undefined ? safeNum(req.body.kpi_amount, 0) : safeNum(existing.kpi_amount, 0);
       const effectiveKpiFrequency = req.body.kpi_frequency !== undefined ? req.body.kpi_frequency : existing.kpi_frequency;
       const effectiveKpiPayoutMechanism = req.body.kpi_payout_mechanism !== undefined ? req.body.kpi_payout_mechanism : existing.kpi_payout_mechanism;
       const effectiveKpiPayoutDate = formatDbDate(req.body.kpi_payout_date !== undefined ? req.body.kpi_payout_date : existing.kpi_payout_date);
 
-      const effectiveTrainingsList = req.body.trainings_list !== undefined ? req.body.trainings_list : (existing.trainings_list || req.body.trainings || []);
-      const effectiveNotesList = req.body.notes_list !== undefined ? req.body.notes_list : (existing.notes_list || req.body.notes || []);
+      const effectiveTrainingsList = req.body.trainings_list !== undefined ? safeParseJsonField(req.body.trainings_list, []) : safeParseJsonField(existing.trainings_list ?? req.body.trainings, []);
+      const effectiveNotesList = req.body.notes_list !== undefined ? safeParseJsonField(req.body.notes_list, []) : safeParseJsonField(existing.notes_list ?? req.body.notes, []);
 
-      const effectiveAssetsList = req.body.assets_list !== undefined ? req.body.assets_list : (existing.assets_list || []);
-      const effectiveBenefitsInfo = req.body.benefits_info !== undefined ? req.body.benefits_info : (existing.benefits_info || {});
-      const effectiveOnboardingTasks = req.body.onboarding_tasks !== undefined ? req.body.onboarding_tasks : (existing.onboarding_tasks || []);
-      const effectiveOffboardingTasks = req.body.offboarding_tasks !== undefined ? req.body.offboarding_tasks : (existing.offboarding_tasks || []);
-      const effectiveSystemLogins = req.body.system_logins !== undefined ? req.body.system_logins : (existing.system_logins || req.body.login_credentials || []);
+      const effectiveAssetsList = req.body.assets_list !== undefined ? safeParseJsonField(req.body.assets_list, []) : safeParseJsonField(existing.assets_list, []);
+      const effectiveBenefitsInfo = req.body.benefits_info !== undefined ? safeParseJsonField(req.body.benefits_info, {}) : safeParseJsonField(existing.benefits_info, {});
+      const effectiveOnboardingTasks = req.body.onboarding_tasks !== undefined ? safeParseJsonField(req.body.onboarding_tasks, []) : safeParseJsonField(existing.onboarding_tasks, []);
+      const effectiveOffboardingTasks = req.body.offboarding_tasks !== undefined ? safeParseJsonField(req.body.offboarding_tasks, []) : safeParseJsonField(existing.offboarding_tasks, []);
+      const effectiveSystemLogins = req.body.system_logins !== undefined ? safeParseJsonField(req.body.system_logins, []) : safeParseJsonField(existing.system_logins ?? req.body.login_credentials, []);
 
       await client.query(`
         INSERT INTO hr_employees (
