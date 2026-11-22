@@ -225,7 +225,20 @@ export const checkPermission = (module: string, action: string) => {
         "SELECT permissions FROM roles WHERE id = (SELECT role_id FROM users WHERE id = $1)",
         [user.id]
       );
-      const permissions = roleRes.rows[0]?.permissions || {};
+      const rawPermissions = roleRes.rows[0]?.permissions;
+      let permissions: Record<string, any> = {};
+      if (typeof rawPermissions === 'string') {
+        try {
+          const parsed = JSON.parse(rawPermissions);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            permissions = parsed;
+          }
+        } catch {
+          permissions = {};
+        }
+      } else if (rawPermissions && typeof rawPermissions === 'object') {
+        permissions = rawPermissions;
+      }
       
       const targetKey = normalizeModuleName(module);
       const permKey = Object.keys(permissions).find(k => k.toLowerCase() === targetKey.toLowerCase());
