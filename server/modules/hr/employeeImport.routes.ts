@@ -1,12 +1,21 @@
 import express, { Request, Response } from "express";
 import multer from "multer";
-import ExcelJS from "exceljs";
 import Papa from "papaparse";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { pool, getDbType } from "../../db/schema.js";
 import { checkPermission } from "../../middleware/auth.js";
 import { memoryCache } from "../../utils/cache.js";
+
+async function loadExcelJs(): Promise<any | null> {
+  try {
+    const mod: any = await import("exceljs");
+    return mod?.default || mod;
+  } catch (err: any) {
+    console.warn("⚠️ exceljs is not available on this host; falling back to CSV mode:", err?.message || err);
+    return null;
+  }
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -697,13 +706,18 @@ async function parseUploadedSpreadsheet(file: Express.Multer.File): Promise<{ ro
       throw new Error("الملف المرفوع ليس ملف Excel (.xlsx) صالحاً. يرجى تنزيل القالب من النظام وإعادة المحاولة.");
     }
 
+    const ExcelJS = await loadExcelJs();
+    if (!ExcelJS) {
+      throw new Error("حزمة exceljs غير مثبتة حالياً على السيرفر. يمكنك حفظ الملف بصيغة CSV (UTF-8) ورفعه مباشرة، أو تشغيل npm install على الاستضافة.");
+    }
+
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(file.buffer as any);
 
     // Prefer "Employees" sheet if present, otherwise first non-instructions sheet
     const sheet =
-      workbook.worksheets.find((ws) => ws.name.toLowerCase().includes("employee")) ||
-      workbook.worksheets.find((ws) => !ws.name.toLowerCase().includes("instruction")) ||
+      workbook.worksheets.find((ws: any) => ws.name.toLowerCase().includes("employee")) ||
+      workbook.worksheets.find((ws: any) => !ws.name.toLowerCase().includes("instruction")) ||
       workbook.worksheets[0];
 
     if (!sheet) {
@@ -712,7 +726,7 @@ async function parseUploadedSpreadsheet(file: Express.Multer.File): Promise<{ ro
 
     const headerRow = sheet.getRow(1);
     const colIdxToKey = new Map<number, string>();
-    headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+    headerRow.eachCell({ includeEmpty: false }, (cell: any, colNumber: number) => {
       const headerStr = cleanString(extractExcelCellValue(cell.value), 120);
       const canonical = normalizeHeaderToKey(headerStr);
       if (canonical) {
@@ -808,6 +822,23 @@ export function createEmployeeImportRouter(wss: any) {
       const firstDept = deptNames[0] || "Operations";
       const secondDept = deptNames[1] || firstDept;
 
+      const ExcelJS = await loadExcelJs();
+      if (!ExcelJS) {
+        // Graceful UTF-8 BOM CSV fallback if exceljs is not installed on host yet
+        const escapeCsv = (v: any) => {
+          const s = String(v ?? "");
+          return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        const headersLine = TEMPLATE_COLUMNS.map((c) => escapeCsv(c.header)).join(",");
+        const row1Line = TEMPLATE_COLUMNS.map((c) => escapeCsv(c.key === "department" ? firstDept : c.example1)).join(",");
+        const row2Line = TEMPLATE_COLUMNS.map((c) => escapeCsv(c.key === "department" ? secondDept : c.example2)).join(",");
+        const csvContent = `\uFEFF${headersLine}\r\n${row1Line}\r\n${row2Line}\r\n`;
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", 'attachment; filename="SystoBiz_Employees_Import_Template.csv"');
+        res.setHeader("Cache-Control", "no-store");
+        return res.send(csvContent);
+      }
+
       const workbook = new ExcelJS.Workbook();
       workbook.creator = "Systo Biz HR";
       workbook.created = new Date();
@@ -826,7 +857,7 @@ export function createEmployeeImportRouter(wss: any) {
       // Style Header Row
       const headerRow = sheet.getRow(1);
       headerRow.height = 30;
-      headerRow.eachCell((cell, colNumber) => {
+      headerRow.eachCell((cell: any, colNumber: number) => {
         const def = TEMPLATE_COLUMNS[colNumber - 1];
         cell.font = {
           name: "Calibri",
@@ -861,9 +892,9 @@ export function createEmployeeImportRouter(wss: any) {
 
       const r2 = sheet.addRow(exRow1Data);
       const r3 = sheet.addRow(exRow2Data);
-      [r2, r3].forEach((row) => {
+      [r2, r3].forEach((row: any) => {
         row.height = 22;
-        row.eachCell({ includeEmpty: true }, (cell) => {
+        row.eachCell({ includeEmpty: true }, (cell: any) => {
           cell.font = { name: "Calibri", size: 10, color: { argb: "FF1E293B" } };
           cell.fill = {
             type: "pattern",
@@ -899,7 +930,7 @@ export function createEmployeeImportRouter(wss: any) {
 
       const gHeader = guideSheet.getRow(1);
       gHeader.height = 28;
-      gHeader.eachCell((cell) => {
+      gHeader.eachCell((cell: any) => {
         cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
         cell.alignment = { vertical: "middle", horizontal: "center" };
@@ -923,7 +954,7 @@ export function createEmployeeImportRouter(wss: any) {
         example: "",
         notes: "يمكنك أيضاً كتابة اسم قسم جديد وسيتم إنشاؤه تلقائياً عند تفعيل خيار إنشاء الأقسام.",
       });
-      deptSectionTitle.eachCell((cell) => {
+      deptSectionTitle.eachCell((cell: any) => {
         cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF059669" } };
       });
