@@ -557,12 +557,30 @@ export function translatePgToMysql(
 /**
  * Normalizes JS values inside MySQL query result rows so column access matches PostgreSQL behavior.
  */
+const MYSQL_JSON_OBJECT_COLUMNS = new Set([
+  'permissions',
+  'mobile_permissions',
+  'role_permissions',
+  'user_permissions'
+]);
+
 function normalizeMysqlRows(rows: any[]): any[] {
   if (!Array.isArray(rows)) return [];
   return rows.map((row) => {
     if (!row || typeof row !== 'object') return row;
     const normalized: Record<string, any> = {};
     for (const [k, v] of Object.entries(row)) {
+      if (typeof v === 'string' && MYSQL_JSON_OBJECT_COLUMNS.has(k.toLowerCase())) {
+        const trimmed = v.trim();
+        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+          try {
+            normalized[k] = JSON.parse(trimmed);
+            continue;
+          } catch {
+            // Keep raw string if invalid JSON
+          }
+        }
+      }
       normalized[k] = v;
     }
     if ('COLUMN_NAME' in normalized && !('column_name' in normalized)) {
