@@ -26,12 +26,14 @@ import {
   DollarSign,
   Briefcase,
   Lock,
-  Unlock
+  Unlock,
+  Upload
 } from 'lucide-react';
 import { Employee, Department } from '../../../types';
 import { useHRContext } from '../HRContext';
 import { cn } from '../../../lib/utils';
 import { AdvancedFilter } from '../../../components/HR/AdvancedFilter';
+import { EmployeeExcelImportModal } from '../../../components/HR/EmployeeExcelImportModal';
 import { ActionGuard, DataScopeBadge, ScreenGuard, FieldGuard } from '../../../components/Common/Guard';
 
 export const EmployeeListPage: React.FC = () => {
@@ -69,6 +71,7 @@ export const EmployeeListPage: React.FC = () => {
   const [isRefreshingDirectory, setIsRefreshingDirectory] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null);
   const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
+  const [showExcelImportModal, setShowExcelImportModal] = useState(false);
 
   // Google Sheets Integration Configuration
   const [localSheetsConfigs, setLocalSheetsConfigs] = useState<Record<string, any>>({});
@@ -628,12 +631,22 @@ export const EmployeeListPage: React.FC = () => {
           </div>
 
           <ActionGuard actionKey="hr:employees:create" module="HR">
-            <button 
-              onClick={() => navigate('/hr/directory/new')}
-              className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[11px] font-bold shadow-2xs shadow-indigo-600/20 whitespace-nowrap cursor-pointer transition-all"
-            >
-              <UserPlus className="w-3 h-3" /> Add Employee
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setShowExcelImportModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-bold shadow-2xs shadow-emerald-600/20 whitespace-nowrap cursor-pointer transition-all"
+                title="Download Excel template & bulk import employees into database"
+              >
+                <Upload className="w-3 h-3" /> Import Excel
+              </button>
+              <button 
+                onClick={() => navigate('/hr/directory/new')}
+                className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[11px] font-bold shadow-2xs shadow-indigo-600/20 whitespace-nowrap cursor-pointer transition-all"
+              >
+                <UserPlus className="w-3 h-3" /> Add Employee
+              </button>
+            </div>
           </ActionGuard>
 
           <ActionGuard actionKey="hr:directory:export_employees" module="HR">
@@ -1222,6 +1235,16 @@ export const EmployeeListPage: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Excel Bulk Import Modal */}
+      <EmployeeExcelImportModal
+        isOpen={showExcelImportModal}
+        onClose={() => setShowExcelImportModal(false)}
+        currentUserId={currentUser?.id}
+        showToast={showCustomToast}
+        onImportSuccess={async () => {
+          await fetchData();
+        }}
+      />
     </div>
   );
 };
