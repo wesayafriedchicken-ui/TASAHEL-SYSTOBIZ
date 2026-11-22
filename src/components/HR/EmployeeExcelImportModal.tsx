@@ -156,16 +156,21 @@ export const EmployeeExcelImportModal: React.FC<EmployeeExcelImportModalProps> =
         const errJson = await res.json().catch(() => ({}));
         throw new Error(errJson.error || `Failed to download template (HTTP ${res.status})`);
       }
+      const contentType = (res.headers.get('content-type') || '').toLowerCase();
+      const isCsvFallback = contentType.includes('text/csv');
+      const downloadName = isCsvFallback
+        ? 'SystoBiz_Employees_Import_Template.csv'
+        : 'SystoBiz_Employees_Import_Template.xlsx';
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'SystoBiz_Employees_Import_Template.xlsx';
+      a.download = downloadName;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-      showToast?.('تم تحميل قالب Excel بنجاح (SystoBiz_Employees_Import_Template.xlsx)', 'success');
+      showToast?.(`تم تحميل القالب بنجاح (${downloadName})`, 'success');
     } catch (err: any) {
       setErrorBanner(err?.message || 'حدث خطأ أثناء تحميل قالب Excel');
     } finally {
