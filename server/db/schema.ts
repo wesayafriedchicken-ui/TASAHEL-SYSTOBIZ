@@ -149,7 +149,7 @@ export async function initDatabase() {
     try {
       try {
         const metaRes = await client.query(`SELECT version FROM _systo_schema_meta WHERE \`key\` = 'schema_version' LIMIT 1`);
-        if (metaRes.rows.length > 0 && metaRes.rows[0].version >= 28) {
+        if (metaRes.rows.length > 0 && metaRes.rows[0].version >= 29) {
           console.log(`⚡ MySQL Database ready (schema cached v${metaRes.rows[0].version}). Fast-path startup complete.`);
           return;
         }
@@ -187,7 +187,33 @@ export async function initDatabase() {
         }
       }
 
-      // Ensure _systo_schema_meta reflects v28
+      // Ensure critical hr_employees columns exist on already-imported MySQL databases
+      try {
+        const existingColsRes = await client.query(
+          `SELECT COLUMN_NAME as column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'hr_employees'`
+        );
+        const existingColSet = new Set(
+          (existingColsRes.rows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME || '').toLowerCase())
+        );
+        if (existingColSet.size > 0) {
+          const requiredCols = [
+            { name: 'joined_at', def: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
+            { name: 'currency', def: "VARCHAR(32) DEFAULT 'EGP'" },
+            { name: 'employment_status', def: "VARCHAR(64) DEFAULT 'active'" },
+          ];
+          for (const col of requiredCols) {
+            if (!existingColSet.has(col.name)) {
+              await client.query(`ALTER TABLE hr_employees ADD COLUMN ${col.name} ${col.def}`).catch((e: any) => {
+                if (e?.code !== 'ER_DUP_FIELDNAME') {
+                  console.warn(`⚠️ MySQL migration notice for hr_employees.${col.name}:`, e?.message);
+                }
+              });
+            }
+          }
+        }
+      } catch (_migErr) {}
+
+      // Ensure _systo_schema_meta reflects v29
       await client.query(`
         CREATE TABLE IF NOT EXISTS _systo_schema_meta (
           \`key\` VARCHAR(191) PRIMARY KEY,
@@ -197,8 +223,8 @@ export async function initDatabase() {
       `).catch(() => {});
 
       await client.query(
-        `INSERT INTO _systo_schema_meta (\`key\`, version, updated_at) VALUES ('schema_version', 28, CURRENT_TIMESTAMP)
-         ON DUPLICATE KEY UPDATE version = 28, updated_at = CURRENT_TIMESTAMP`
+        `INSERT INTO _systo_schema_meta (\`key\`, version, updated_at) VALUES ('schema_version', 29, CURRENT_TIMESTAMP)
+         ON DUPLICATE KEY UPDATE version = 29, updated_at = CURRENT_TIMESTAMP`
       ).catch(() => {});
 
       console.log('⚡ MySQL Database verified & ready.');
