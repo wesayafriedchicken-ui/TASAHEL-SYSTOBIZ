@@ -18,12 +18,16 @@ import {
   processBiometricPunches, 
   generatePythonBridgeScript 
 } from "./zkteco.routes.js";
+import { createEmployeeImportRouter } from "./employeeImport.routes.js";
 
 export default function hrRoutes(wss: any) {
   const router = express.Router();
 
   // Action / Button Control engine endpoints
   router.use("/action-controls", createActionControlsRouter());
+
+  // Bulk Excel Template & Employee Directory Import endpoints (/api/hr/employees/import-template, /import/preview, /import)
+  router.use("/employees", createEmployeeImportRouter(wss));
 
   // HR Departments Endpoint (Used by Employee Profile, Job Tab, Directory, etc.)
   router.get("/departments", async (req, res) => {
@@ -1753,7 +1757,7 @@ export default function hrRoutes(wss: any) {
       res.json({ id: userId, name: effectiveName, email: effectiveEmail, department_id: resolvedDeptId });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      if (err.code === '23505') {
+      if (err.code === '23505' || err.code === 'ER_DUP_ENTRY') {
         return res.status(400).json({ error: `An employee with email '${email}' already exists.` });
       }
       console.error(err);
