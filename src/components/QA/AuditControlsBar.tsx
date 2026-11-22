@@ -11,6 +11,7 @@ import {
   Check,
   Plus,
   Download,
+  Upload,
   FileSpreadsheet
 } from 'lucide-react';
 import { QAAdvancedFilter } from './QAAdvancedFilter';
@@ -48,7 +49,9 @@ interface AuditControlsBarProps {
   onImport?: () => void;
   importing?: boolean;
   importTooltip?: string;
+  onExcelImport?: () => void;
   onExport?: () => void;
+  exporting?: boolean;
   exportTooltip?: string;
 }
 
@@ -72,7 +75,9 @@ export const AuditControlsBar: React.FC<AuditControlsBarProps> = ({
   onImport,
   importing = false,
   importTooltip,
+  onExcelImport,
   onExport,
+  exporting = false,
   exportTooltip,
 }) => {
   const [isDateOpen, setIsDateOpen] = useState(false);
@@ -407,30 +412,45 @@ export const AuditControlsBar: React.FC<AuditControlsBarProps> = ({
           </button>
         )}
 
-        {/* Pull Orders / Import Sheet (Icon only) */}
+        {/* Import Excel Bulk Button */}
+        {onExcelImport && (
+          <button
+            type="button"
+            onClick={onExcelImport}
+            title="Import Excel / CSV Template & Upload"
+            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-xl text-[11px] font-bold transition-all cursor-pointer shadow-2xs active:scale-95 flex items-center gap-1.5 shrink-0"
+          >
+            <Upload className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Import Excel</span>
+          </button>
+        )}
+
+        {/* Export Excel Button */}
+        {onExport && (
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={exporting}
+            title={exportTooltip || "Export to Excel (.xlsx)"}
+            aria-label={exportTooltip || "Export to Excel (.xlsx)"}
+            className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 rounded-xl text-[11px] font-bold transition-all cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+          >
+            <FileSpreadsheet className={`w-3.5 h-3.5 text-emerald-600 ${exporting ? 'animate-pulse' : ''}`} />
+            <span>{exporting ? 'Exporting...' : 'Export Excel'}</span>
+          </button>
+        )}
+
+        {/* Pull Orders / Sync Button */}
         {onImport && (
           <button
             type="button"
             onClick={onImport}
             disabled={importing}
-            title={importTooltip || "Pull Orders / Import Sheet"}
-            aria-label={importTooltip || "Pull Orders / Import Sheet"}
+            title={importTooltip || "Pull Orders / Sync CRM"}
+            aria-label={importTooltip || "Pull Orders / Sync CRM"}
             className="p-2 bg-slate-50/90 hover:bg-slate-100 border border-slate-200/90 text-slate-700 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50 flex items-center justify-center shrink-0"
           >
             <Download className={`w-3.5 h-3.5 text-indigo-600 ${importing ? 'animate-bounce' : ''}`} />
-          </button>
-        )}
-
-        {/* Export Excel (Icon only) */}
-        {onExport && (
-          <button
-            type="button"
-            onClick={onExport}
-            title={exportTooltip || "Export to Excel / CSV"}
-            aria-label={exportTooltip || "Export to Excel / CSV"}
-            className="p-2 bg-slate-50/90 hover:bg-slate-100 border border-slate-200/90 text-slate-700 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95 flex items-center justify-center shrink-0"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
           </button>
         )}
 

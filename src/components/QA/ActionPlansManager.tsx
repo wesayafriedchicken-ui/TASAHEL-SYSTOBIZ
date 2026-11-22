@@ -37,13 +37,16 @@ import {
   RefreshCw,
   Award,
   Calendar,
-  ExternalLink
+  ExternalLink,
+  Upload,
+  FileSpreadsheet
 } from 'lucide-react';
 import { IncidentType, AuditRecord } from './IncidentWorkflowStepper';
 import { QualityRemediationForm } from './QualityRemediationForm';
 import { SortableColumnHeader } from './SortableColumnHeader';
 import { AuditPagination } from './AuditPagination';
 import { QAAdvancedFilter } from './QAAdvancedFilter';
+import { QAExcelImportModal, downloadQaExcelFile } from './QAExcelImportModal';
 import { useNavigate } from 'react-router-dom';
 
 export interface ActionTask {
@@ -167,6 +170,10 @@ export const ActionPlansManager: React.FC<ActionPlansManagerProps> = ({
   // New Rule Modal
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<Partial<ActionRulePreset> | null>(null);
+
+  // Excel Import / Export State
+  const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   useEffect(() => {
     fetchActionPlans();
@@ -647,6 +654,36 @@ export const ActionPlansManager: React.FC<ActionPlansManagerProps> = ({
             >
               <Zap className="w-3.5 h-3.5 text-amber-500" />
               <span>Action Rules Engine {actionRules.length > 0 ? `(${actionRules.length})` : ''}</span>
+            </button>
+
+            {/* Import Excel Button */}
+            <button
+              type="button"
+              onClick={() => setIsExcelImportOpen(true)}
+              className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-all shadow-xs active:scale-95 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Import Excel</span>
+            </button>
+
+            {/* Export Excel Button */}
+            <button
+              type="button"
+              disabled={exportingExcel}
+              onClick={async () => {
+                setExportingExcel(true);
+                await downloadQaExcelFile(
+                  'action_plans',
+                  'export',
+                  (msg) => showToast(`📊 ${msg}`),
+                  (err) => showToast(`⚠️ ${err}`)
+                );
+                setExportingExcel(false);
+              }}
+              className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold transition-all shadow-xs active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>{exportingExcel ? 'Exporting...' : 'Export Excel'}</span>
             </button>
 
             {/* New Action Plan Stepper Button */}
@@ -1351,6 +1388,15 @@ export const ActionPlansManager: React.FC<ActionPlansManagerProps> = ({
           </div>
         </div>
       )}
+
+      {/* QA EXCEL IMPORT / EXPORT MODAL FOR ACTION PLANS */}
+      <QAExcelImportModal
+        isOpen={isExcelImportOpen}
+        caseType="action_plans"
+        onClose={() => setIsExcelImportOpen(false)}
+        onImportSuccess={fetchActionPlans}
+        showToast={showToast}
+      />
     </div>
   );
 };

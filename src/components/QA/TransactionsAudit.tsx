@@ -7,6 +7,7 @@ import {
   Star, 
   ClipboardList, 
   Download, 
+  Upload,
   Plus, 
   Search, 
   Filter, 
@@ -45,6 +46,7 @@ import {
   NpsBoardCardsView 
 } from './AuditRecordViews';
 import { PresetRootCauseModal, PresetFormModel, PresetSubReasonItem } from './PresetRootCauseModal';
+import { QAExcelImportModal, QaExcelCaseType, downloadQaExcelFile } from './QAExcelImportModal';
 import { useNavigate } from 'react-router-dom';
 
 export interface TransactionsAuditProps {
@@ -83,6 +85,8 @@ export const TransactionsAudit: React.FC<TransactionsAuditProps> = ({ forcedSubT
   const [selectedRecordForActionPlan, setSelectedRecordForActionPlan] = useState<Partial<AuditRecord> | null>(null);
   const [loading, setLoading] = useState(true);
   const [pulling, setPulling] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [excelImportCase, setExcelImportCase] = useState<QaExcelCaseType | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Stepper Modal State
@@ -303,128 +307,35 @@ export const TransactionsAudit: React.FC<TransactionsAuditProps> = ({ forcedSubT
     }
   };
 
-  // Export Audits to Excel / CSV
-  const handleExportAudits = () => {
-    const recordsToExport = filteredAudits.length > 0 ? filteredAudits : currentTypeAudits;
-    if (recordsToExport.length === 0) {
-      showToast('⚠️ No audit records available to export');
-      return;
-    }
-
-    const headers = [
-      'Transaction ID',
-      'QA Reference',
-      'Type',
-      'Order Date',
-      'Customer Name',
-      'Agent Name',
-      'Department',
-      'SLA Status',
-      'QA Status',
-      'Auditor Name',
-      'Root Cause',
-      'Sub Reason',
-      'Order Amount',
-      'Refund Amount',
-      'Manager Approval',
-      'Workflow Status'
-    ];
-
-    const escapeCsv = (val: any) => {
-      if (val === null || val === undefined) return '""';
-      const str = String(val).replace(/"/g, '""');
-      return `"${str}"`;
-    };
-
-    const rows = recordsToExport.map(r => [
-      escapeCsv(r.transaction_id),
-      escapeCsv(r.qa_reference_number || ''),
-      escapeCsv(r.type),
-      escapeCsv(r.order_date ? new Date(r.order_date).toLocaleDateString() : ''),
-      escapeCsv(r.customer_name),
-      escapeCsv(r.agent_name),
-      escapeCsv(r.department),
-      escapeCsv(r.sla_status),
-      escapeCsv(r.qa_status),
-      escapeCsv(r.auditor_name),
-      escapeCsv(r.root_cause || ''),
-      escapeCsv(r.sub_reason || ''),
-      escapeCsv(r.order_amount ?? 0),
-      escapeCsv(r.refund_amount ?? 0),
-      escapeCsv(r.manager_approval || 'Pending'),
-      escapeCsv(r.workflow_status || '')
-    ].join(','));
-
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `${currentIncidentType || 'transactions'}_audit_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast(`📊 Exported ${recordsToExport.length} audits to Excel/CSV`);
+  // Export Live Database Records to Styled Excel (.xlsx)
+  const handleExportCaseExcel = async (caseType: QaExcelCaseType) => {
+    setExportingExcel(true);
+    await downloadQaExcelFile(
+      caseType,
+      'export',
+      (msg) => showToast(`📊 ${msg}`),
+      (err) => showToast(`⚠️ ${err}`)
+    );
+    setExportingExcel(false);
   };
 
-  // Export NPS Records to Excel / CSV
-  const handleExportNps = () => {
-    const recordsToExport = filteredNps.length > 0 ? filteredNps : npsRecords;
-    if (recordsToExport.length === 0) {
-      showToast('⚠️ No NPS feedback records available to export');
-      return;
-    }
-
-    const headers = [
-      'Transaction ID',
-      'QA Reference',
-      'Customer Name',
-      'Agent Name',
-      'Rating',
-      'Category',
-      'Feedback Text',
-      'Delay Linked',
-      'Root Cause',
-      'Corrective Action',
-      'Status',
-      'Auditor Name',
-      'Created At'
-    ];
-
-    const escapeCsv = (val: any) => {
-      if (val === null || val === undefined) return '""';
-      const str = String(val).replace(/"/g, '""');
-      return `"${str}"`;
+  const handleExportAudits = () => {
+    const map: Record<string, QaExcelCaseType> = {
+      complaint: 'complaints',
+      delay: 'delays',
+      refund: 'refunds',
+      cancellation: 'cancellations',
     };
+    const targetCase = (currentIncidentType && map[currentIncidentType]) || 'complaints';
+    handleExportCaseExcel(targetCase);
+  };
 
-    const rows = recordsToExport.map(r => [
-      escapeCsv(r.transaction_id),
-      escapeCsv(r.qa_reference_number || ''),
-      escapeCsv(r.customer_name),
-      escapeCsv(r.agent_name),
-      escapeCsv(r.rating ?? ''),
-      escapeCsv(r.category || ''),
-      escapeCsv(r.feedback_text || ''),
-      escapeCsv(r.delay_linked ? 'Yes' : 'No'),
-      escapeCsv(r.root_cause || ''),
-      escapeCsv(r.corrective_action || ''),
-      escapeCsv(r.status || ''),
-      escapeCsv(r.auditor_name || ''),
-      escapeCsv(r.created_at ? new Date(r.created_at).toLocaleDateString() : '')
-    ].join(','));
+  const handleExportNps = () => {
+    handleExportCaseExcel('nps');
+  };
 
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `nps_feedback_audit_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast(`📊 Exported ${recordsToExport.length} NPS records to Excel/CSV`);
+  const handleExportChecklists = () => {
+    handleExportCaseExcel('checklists');
   };
 
   // Save Record via Stepper
@@ -1087,9 +998,19 @@ export const TransactionsAudit: React.FC<TransactionsAuditProps> = ({ forcedSubT
             newItemLabel="New Incident Audit"
             onImport={() => handlePullData(currentIncidentType)}
             importing={pulling}
-            importTooltip="Pull Orders / Import Sheet"
+            importTooltip="Pull Orders from CRM / Operations"
+            onExcelImport={() => {
+              const map: Record<string, QaExcelCaseType> = {
+                complaint: 'complaints',
+                delay: 'delays',
+                refund: 'refunds',
+                cancellation: 'cancellations',
+              };
+              setExcelImportCase(map[currentIncidentType] || 'complaints');
+            }}
             onExport={handleExportAudits}
-            exportTooltip="Export to Excel / CSV"
+            exporting={exportingExcel}
+            exportTooltip="Export to Excel (.xlsx)"
           />
 
           {/* Records View (List Table or Board Cards) */}
@@ -1220,9 +1141,11 @@ export const TransactionsAudit: React.FC<TransactionsAuditProps> = ({ forcedSubT
             newItemLabel="Log Customer Feedback"
             onImport={() => handlePullData('nps')}
             importing={pulling}
-            importTooltip="Pull Orders / Import Sheet"
+            importTooltip="Pull Orders from CRM / Operations"
+            onExcelImport={() => setExcelImportCase('nps')}
             onExport={handleExportNps}
-            exportTooltip="Export to Excel / CSV"
+            exporting={exportingExcel}
+            exportTooltip="Export NPS to Excel (.xlsx)"
           />
 
           {/* Feedback Records View (List Table or Board Cards) */}
@@ -1291,17 +1214,38 @@ export const TransactionsAudit: React.FC<TransactionsAuditProps> = ({ forcedSubT
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedPresetForModal(null);
-                setIsEditingPreset(true);
-              }}
-              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-600/20 active:scale-95 flex items-center gap-2 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Root Cause Preset</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setExcelImportCase('checklists')}
+                className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-2 cursor-pointer"
+              >
+                <Upload className="w-4 h-4 text-indigo-300" />
+                <span>Import Excel</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportChecklists}
+                disabled={exportingExcel}
+                className="px-4 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-100 border border-emerald-400/30 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
+                <span>{exportingExcel ? 'Exporting...' : 'Export Excel'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPresetForModal(null);
+                  setIsEditingPreset(true);
+                }}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-600/20 active:scale-95 flex items-center gap-2 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Root Cause Preset</span>
+              </button>
+            </div>
           </div>
 
           {/* Root Causes Grid per Incident Type */}
@@ -1619,6 +1563,15 @@ export const TransactionsAudit: React.FC<TransactionsAuditProps> = ({ forcedSubT
           </div>
         </div>
       )}
+
+      {/* UNIFIED QA EXCEL IMPORT / EXPORT MODAL */}
+      <QAExcelImportModal
+        isOpen={Boolean(excelImportCase)}
+        caseType={excelImportCase || 'complaints'}
+        onClose={() => setExcelImportCase(null)}
+        onImportSuccess={fetchAuditData}
+        showToast={showToast}
+      />
 
     </div>
   );
