@@ -2209,12 +2209,26 @@ export default function AdminPanel({
   const handleSaveRole = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      if (!editingRole?.name) {
+      const trimmedName = editingRole?.name?.trim();
+      if (!trimmedName) {
         setToast({ message: 'Role name is required.', type: 'error' });
         return;
       }
 
-      let initialPermissions = editingRole?.permissions || {};
+      const parsePermsObject = (val: any): Record<string, any> => {
+        if (!val) return {};
+        if (typeof val === 'string') {
+          try {
+            const parsed = JSON.parse(val);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+          } catch {
+            return {};
+          }
+        }
+        return typeof val === 'object' && !Array.isArray(val) ? val : {};
+      };
+
+      let initialPermissions = parsePermsObject(editingRole?.permissions);
 
       // If creating a brand new role, initialize permissions according to selected preset
       if (!editingRole?.id) {
@@ -2262,35 +2276,78 @@ export default function AdminPanel({
         initialPermissions = generatedPerms;
       }
 
-      const newRole = {
-        ...editingRole,
-        id: editingRole?.id || Date.now(),
-        permissions: initialPermissions
+      const isEditing = Boolean(editingRole?.id);
+      const endpoint = isEditing ? `/api/admin/roles/${editingRole!.id}` : '/api/admin/roles';
+      const method = isEditing ? 'PATCH' : 'POST';
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          name: trimmedName,
+          description: editingRole?.description || '',
+          permissions: initialPermissions
+        })
+      });
+
+      const responseText = await response.text();
+      let responseData: any = null;
+      try {
+        responseData = responseText ? JSON.parse(responseText) : null;
+      } catch {
+        responseData = null;
+      }
+
+      if (!response.ok) {
+        const errMessage = responseData?.error || responseData?.message || `Failed to save role (HTTP ${response.status})`;
+        throw new Error(errMessage);
+      }
+
+      const savedRole: Role = {
+        ...(editingRole || {}),
+        ...(responseData || {}),
+        id: Number(responseData?.id ?? editingRole?.id),
+        name: responseData?.name || trimmedName,
+        description: responseData?.description ?? editingRole?.description ?? '',
+        permissions: parsePermsObject(responseData?.permissions ?? initialPermissions)
       } as Role;
 
-      const updatedRoles = editingRole?.id 
-        ? roles.map(r => r.id === editingRole.id ? newRole : r)
-        : [...roles, newRole];
+      const updatedRoles = isEditing
+        ? roles.map(r => r.id === editingRole!.id ? savedRole : r)
+        : [...roles, savedRole];
 
       setRoles(updatedRoles);
-      localStorage.setItem('business_core_roles', JSON.stringify(updatedRoles));
+      if (!isEditing && savedRole.id) {
+        setSelectedRoleId(savedRole.id);
+      }
 
-      logAction(editingRole?.id ? 'Update Role' : 'Create Role', `Role ${newRole.name} ${editingRole?.id ? 'updated' : 'created'}`, editingRole?.id ? roles.find(r => r.id === editingRole.id) : null, newRole);
+      try {
+        safeSetItem('business_core_roles', JSON.stringify(updatedRoles));
+      } catch (_storageErr) {
+        // Ignore localStorage quota issues — role is already persisted in database
+      }
 
-      // Background sync
-      fetch(editingRole?.id ? `/api/admin/roles/${editingRole.id}` : '/api/admin/roles', {
-        method: editingRole?.id ? 'PATCH' : 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify(newRole)
-      }).catch(err => console.warn('Background sync failed:', err));
+      try {
+        logAction(
+          isEditing ? 'Update Role' : 'Create Role',
+          `Role ${savedRole.name} ${isEditing ? 'updated' : 'created'}`,
+          isEditing ? roles.find(r => r.id === editingRole!.id) : null,
+          savedRole
+        );
+      } catch (_logErr) {
+        // Non-fatal audit log error
+      }
 
       setIsRoleModalOpen(false);
       setEditingRole(null);
       onDataChange?.();
-      setToast({ message: `Role ${editingRole?.id ? 'updated' : 'created'} successfully!`, type: 'success' });
+      setToast({ message: `Role ${isEditing ? 'updated' : 'created'} successfully!`, type: 'success' });
     } catch (err) {
-      console.error('Failed to save role locally:', err);
-      setToast({ message: 'Error saving role locally.', type: 'error' });
+      console.error('Failed to save role:', err);
+      setToast({
+        message: `Error saving role: ${err instanceof Error ? err.message : 'Database error'}`,
+        type: 'error'
+      });
     }
   };
 
@@ -2337,7 +2394,7 @@ export default function AdminPanel({
         : [...globalStatuses, savedStatus];
 
       setGlobalStatuses(updatedStatuses);
-      localStorage.setItem('business_core_statuses', JSON.stringify(updatedStatuses));
+      try { safeSetItem('business_core_statuses', JSON.stringify(updatedStatuses)); } catch (_e) {}
 
       logAction(editingStatus?.id ? 'Update Status' : 'Create Status', `Status ${savedStatus.label} for ${savedStatus.module_id} ${editingStatus?.id ? 'updated' : 'created'}`, editingStatus?.id ? globalStatuses.find(s => s.id === editingStatus.id) : null, savedStatus);
 
@@ -3613,19 +3670,27 @@ export default function AdminPanel({
         
         const updatedStatuses = globalStatuses.filter((s: any) => s.id !== item.id);
         setGlobalStatuses(updatedStatuses);
-        localStorage.setItem('business_core_statuses', JSON.stringify(updatedStatuses));
+        try { safeSetItem('business_core_statuses', JSON.stringify(updatedStatuses)); } catch (_e) {}
         logAction('Delete Status', `Status ${item.label} deleted`);
       } else if (type === 'user') {
+        const res = await fetch(`/api/admin/users/${item.id}`, { method: 'DELETE', headers: getAuthHeaders() });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to delete user');
+        }
         const updatedUsers = users.filter(u => u.id !== item.id);
         setUsers(updatedUsers);
-        localStorage.setItem('business_core_users', JSON.stringify(updatedUsers));
-        await fetch(`/api/admin/users/${item.id}`, { method: 'DELETE', headers: getAuthHeaders() });
+        try { safeSetItem('business_core_users', JSON.stringify(updatedUsers)); } catch (_e) {}
         logAction('Delete User', `Employee ${item.name} deleted`);
       } else if (type === 'role') {
+        const res = await fetch(`/api/admin/roles/${item.id}`, { method: 'DELETE', headers: getAuthHeaders() });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to delete role');
+        }
         const updatedRoles = roles.filter(r => r.id !== item.id);
         setRoles(updatedRoles);
-        localStorage.setItem('business_core_roles', JSON.stringify(updatedRoles));
-        await fetch(`/api/admin/roles/${item.id}`, { method: 'DELETE', headers: getAuthHeaders() });
+        try { safeSetItem('business_core_roles', JSON.stringify(updatedRoles)); } catch (_e) {}
         logAction('Delete Role', `Role ${item.name} deleted`);
       } else if (type === 'module') {
         const updatedModules = systemModules.filter(m => m.id !== item.id);
