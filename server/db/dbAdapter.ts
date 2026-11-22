@@ -407,9 +407,22 @@ export function translatePgToMysql(
     '($1 IS NULL) DESC, $1 ASC'
   );
 
+  // Convert PostgreSQL COUNT(*) FILTER (WHERE cond) => SUM(CASE WHEN cond THEN 1 ELSE 0 END)
+  sql = sql.replace(
+    /\bCOUNT\s*\(\s*\*\s*\)\s+FILTER\s*\(\s*WHERE\s+([^()]+)\)/gi,
+    'SUM(CASE WHEN $1 THEN 1 ELSE 0 END)'
+  );
+
   // Transform code chunks safely without modifying quoted strings
   sql = transformSqlOutsideStrings(sql, (chunk) => {
     let out = chunk;
+
+    // Strip PostgreSQL row-lock table qualifier: FOR UPDATE OF u / FOR SHARE OF u, e -> FOR UPDATE / FOR SHARE
+    // MariaDB and MySQL reject the "OF <table_alias>" clause on SELECT ... FOR UPDATE/SHARE.
+    out = out.replace(
+      /\bFOR\s+(UPDATE|SHARE)\s+OF\s+[a-zA-Z0-9_.,\s]+?(?=\s*(?:NOWAIT|SKIP\s+LOCKED|;|\)|$))/gi,
+      'FOR $1'
+    );
 
     // Strip public. schema prefix
     out = out.replace(/\bpublic\.([a-zA-Z_][a-zA-Z0-9_]*)\b/g, '$1');
@@ -487,6 +500,16 @@ export function translatePgToMysql(
   const finalParams: any[] = [];
   const normalizeParam = (val: any): any => {
     if (val === undefined) return null;
+    if (typeof val === 'number' && !Number.isFinite(val)) return null;
+    if (
+      typeof val === 'string' &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/.test(val)
+    ) {
+      const parsed = new Date(val);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed.toISOString().slice(0, 19).replace('T', ' ');
+      }
+    }
     if (val !== null && typeof val === 'object' && !(val instanceof Date) && !Buffer.isBuffer(val)) {
       return JSON.stringify(val);
     }
