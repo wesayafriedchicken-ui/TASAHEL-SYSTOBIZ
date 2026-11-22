@@ -4,9 +4,11 @@ import { pool, getDbType } from "../../db/schema.js";
 import { automationService } from "../../services/automation.service.js";
 import { logAction } from "../../services/auditLogger.js";
 import { memoryCache } from "../../utils/cache.js";
+import { createQaExcelImportExportRouter } from "./qaExcelImportExport.routes.js";
 
 export default function qaRoutes(wss: any) {
   const router = express.Router();
+  router.use(createQaExcelImportExportRouter());
 
   // Proactively ensure database schema compatibility for QA tables
   const ensureQASchema = async () => {
