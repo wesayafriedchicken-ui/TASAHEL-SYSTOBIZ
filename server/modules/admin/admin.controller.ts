@@ -241,6 +241,33 @@ export const deleteUser = async (req: Request, res: Response) => {
   }
 };
 
+function safeParseJsonObject(val: any): Record<string, any> {
+  if (!val) return {};
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  if (typeof val === 'object' && !Array.isArray(val)) {
+    return { ...val };
+  }
+  return {};
+}
+
+function normalizeRoleRow(row: any) {
+  if (!row || typeof row !== 'object') return row;
+  return {
+    ...row,
+    permissions: safeParseJsonObject(row.permissions),
+    mobile_permissions: row.mobile_permissions !== undefined ? safeParseJsonObject(row.mobile_permissions) : undefined
+  };
+}
+
 export const getRoles = async (req: Request, res: Response) => {
   const companyId = (req as any).user?.company_id || 1;
   const cacheKey = `admin:roles:${companyId}`;
@@ -253,8 +280,9 @@ export const getRoles = async (req: Request, res: Response) => {
       "SELECT id, name, description, company_id, permissions, mobile_permissions FROM roles WHERE company_id = $1 OR company_id IS NULL ORDER BY id ASC", 
       [companyId]
     );
-    memoryCache.set(cacheKey, result.rows, 120); // 2 minutes cache
-    res.json(result.rows);
+    const normalizedRoles = result.rows.map(normalizeRoleRow);
+    memoryCache.set(cacheKey, normalizedRoles, 120); // 2 minutes cache
+    res.json(normalizedRoles);
   } catch (err) {
     console.error('getRoles error:', err);
     const fallbackRoles = [
@@ -267,18 +295,83 @@ export const getRoles = async (req: Request, res: Response) => {
 };
 
 export const createRole = async (req: Request, res: Response) => {
-  const { name, description, permissions } = req.body;
+  const rawName = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const description = typeof req.body?.description === 'string' ? req.body.description : '';
+  const permissionsObj = safeParseJsonObject(req.body?.permissions);
   const companyId = (req as any).user?.company_id || 1;
+
+  if (!rawName) {
+    return res.status(400).json({ error: 'Role name is required.' });
+  }
+
   try {
     const result = await pool.query(
-      "INSERT INTO roles (name, description, permissions, company_id) VALUES ($1, $2, $3, $4) RETURNING id, name, description, permissions, company_id",
-      [name, description || '', JSON.stringify(permissions || {}), companyId]
+      "INSERT INTO roles (name, description, permissions, company_id) VALUES ($1, $2, $3, $4) RETURNING id, name, description, permissions, mobile_permissions, company_id",
+      [rawName, description, JSON.stringify(permissionsObj), companyId]
     );
+    let savedRow = result.rows?.[0];
+    if (!savedRow) {
+      const lookup = await pool.query(
+        "SELECT id, name, description, permissions, mobile_permissions, company_id FROM roles WHERE company_id = $1 AND name = $2 ORDER BY id DESC LIMIT 1",
+        [companyId, rawName]
+      );
+      savedRow = lookup.rows?.[0];
+    }
     memoryCache.del(`admin:roles:${companyId}`);
     memoryCache.del(`admin:all:${companyId}`);
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(201).json(normalizeRoleRow(savedRow || { name: rawName, description, permissions: permissionsObj, company_id: companyId }));
+  } catch (err: any) {
+    console.error('createRole error:', err);
+    if (err?.code === 'ER_DUP_ENTRY' || err?.code === '23505') {
+      return res.status(409).json({ error: `Role "${rawName}" already exists.` });
+    }
+    res.status(500).json({ error: err?.message || 'Failed to create role' });
+  }
+};
+
+export const updateRole = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const companyId = (req as any).user?.company_id || 1;
+  const rawName = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
+  const description = req.body?.description;
+  const hasPermissions = req.body?.permissions !== undefined;
+  const permissionsObj = hasPermissions ? safeParseJsonObject(req.body.permissions) : undefined;
+
+  try {
+    const existingRes = await pool.query(
+      "SELECT id, name, description, permissions, mobile_permissions, company_id FROM roles WHERE id = $1 AND (company_id = $2 OR company_id IS NULL)",
+      [id, companyId]
+    );
+    if (!existingRes.rows || existingRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Role not found' });
+    }
+
+    const existing = normalizeRoleRow(existingRes.rows[0]);
+    const nextName = rawName && rawName.length > 0 ? rawName : existing.name;
+    const nextDescription = description !== undefined ? String(description ?? '') : (existing.description || '');
+    const nextPermissions = hasPermissions ? permissionsObj! : existing.permissions;
+
+    let result = await pool.query(
+      "UPDATE roles SET name = $1, description = $2, permissions = $3 WHERE id = $4 AND (company_id = $5 OR company_id IS NULL) RETURNING id, name, description, permissions, mobile_permissions, company_id",
+      [nextName, nextDescription, JSON.stringify(nextPermissions), id, companyId]
+    );
+
+    if (!result.rows || result.rows.length === 0) {
+      result = await pool.query(
+        "SELECT id, name, description, permissions, mobile_permissions, company_id FROM roles WHERE id = $1",
+        [id]
+      );
+    }
+
+    memoryCache.del(`admin:roles:${companyId}`);
+    memoryCache.del(`admin:all:${companyId}`);
+    res.json(normalizeRoleRow(result.rows[0] || { ...existing, name: nextName, description: nextDescription, permissions: nextPermissions }));
+  } catch (err: any) {
+    console.error('updateRole error:', err);
+    if (err?.code === 'ER_DUP_ENTRY' || err?.code === '23505') {
+      return res.status(409).json({ error: `Role "${rawName}" already exists.` });
+    }
+    res.status(500).json({ error: err?.message || 'Failed to update role' });
   }
 };
 
@@ -374,7 +467,7 @@ export const updateRolePermissions = async (req: Request, res: Response) => {
   const { permissions, description } = req.body;
   const companyId = (req as any).user?.company_id || 1;
   try {
-    const cleanPerms = { ...(permissions || {}) };
+    const cleanPerms = safeParseJsonObject(permissions);
     if (cleanPerms['QA'] || cleanPerms['Quality Assurance'] || cleanPerms['qa']) {
       const baseQa = cleanPerms['QA'] || cleanPerms['Quality Assurance'] || cleanPerms['qa'];
       cleanPerms['QA'] = baseQa;
@@ -416,7 +509,7 @@ export const updateRolePermissions = async (req: Request, res: Response) => {
     }
 
     let query = "UPDATE roles SET permissions = $1 WHERE id = $2 AND (company_id = $3 OR company_id IS NULL) RETURNING id, name, description, permissions";
-    let params = [JSON.stringify(cleanPerms), id, companyId];
+    let params: any[] = [JSON.stringify(cleanPerms), id, companyId];
     if (description !== undefined) {
       query = "UPDATE roles SET permissions = $1, description = $2 WHERE id = $3 AND (company_id = $4 OR company_id IS NULL) RETURNING id, name, description, permissions";
       params = [JSON.stringify(cleanPerms), description, id, companyId];
@@ -424,7 +517,10 @@ export const updateRolePermissions = async (req: Request, res: Response) => {
     const result = await pool.query(query, params);
     memoryCache.del(`admin:roles:${companyId}`);
     memoryCache.del(`admin:all:${companyId}`);
-    res.json(result.rows[0]);
+    if (!result.rows || result.rows.length === 0) {
+      return res.status(404).json({ error: 'Role not found' });
+    }
+    res.json(normalizeRoleRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -452,7 +548,7 @@ export const getRoleModulePermissions = async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Role not found" });
     }
     const role = result.rows[0];
-    const perms = role.permissions || {};
+    const perms = safeParseJsonObject(role.permissions);
     
     let decodedMod = moduleId || '';
     try {
@@ -542,7 +638,7 @@ export const updateRoleModulePermissions = async (req: Request, res: Response) =
       return res.status(404).json({ error: "Role not found" });
     }
     const role = roleRes.rows[0];
-    const allPerms = role.permissions || {};
+    const allPerms = safeParseJsonObject(role.permissions);
     
     let decodedMod = moduleId || '';
     try {
@@ -690,7 +786,7 @@ export const getRoleMobilePermissions = async (req: Request, res: Response) => {
       "/Delivery": true
     };
 
-    const currentMob = role.mobile_permissions || {};
+    const currentMob = safeParseJsonObject(role.mobile_permissions);
     const mobile_permissions = { ...defaults, ...currentMob };
 
     const screens = [
@@ -782,7 +878,7 @@ export const updateRoleMobilePermissions = async (req: Request, res: Response) =
       "/Delivery": true
     };
 
-    const currentMob = role.mobile_permissions || {};
+    const currentMob = safeParseJsonObject(role.mobile_permissions);
     const newMob = { ...defaults, ...currentMob };
 
     if (incoming && typeof incoming === "object") {
@@ -801,7 +897,7 @@ export const updateRoleMobilePermissions = async (req: Request, res: Response) =
       if (typeof incoming["delivery_tracking"] === "boolean") newMob["/Delivery"] = incoming["delivery_tracking"];
     }
 
-    const existingPerms = role.permissions || {};
+    const existingPerms = safeParseJsonObject(role.permissions);
     const updatedPerms = {
       ...existingPerms,
       mobile_permissions: { ...newMob },
@@ -1395,7 +1491,7 @@ export const getAdminData = async (req: Request, res: Response) => {
 
     const payload = {
       users: users.rows,
-      roles: roles.rows,
+      roles: roles.rows.map(normalizeRoleRow),
       departments: departments.rows,
       statuses: statuses.rows,
       modules: modules.rows
