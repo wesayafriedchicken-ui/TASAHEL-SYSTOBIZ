@@ -33,8 +33,10 @@ import {
   Zap,
   AlertTriangle,
   FileText,
-  Check
+  Check,
+  Radio
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { User } from '../../types';
 import DeleteConfirmation from '../Common/DeleteConfirmation';
@@ -87,6 +89,7 @@ interface OperationsHubModuleProps {
 }
 
 export function OperationsHubModule({ users, onDataChange }: OperationsHubModuleProps) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'pipeline' | 'assignment' | 'cost-override' | 'auto-assign' | 'performance' | 'qa-review'>('pipeline');
   const [loading, setLoading] = useState(true);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
@@ -871,7 +874,30 @@ export function OperationsHubModule({ users, onDataChange }: OperationsHubModule
         )}
       </AnimatePresence>
 
-      {/* Header section with Arabized terms */}
+      {/* Compact Breadcrumb Bar back to Operations Hub Launcher */}
+      <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <button
+            type="button"
+            onClick={() => navigate('/operations-hub')}
+            className="inline-flex items-center gap-1.5 font-semibold text-slate-600 hover:text-teal-700 transition-colors cursor-pointer"
+          >
+            <span>Operations Hub</span>
+          </button>
+          <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+          <span className="font-semibold text-teal-700">Overview</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate('/operations-hub/LiveDispatchSystem')}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-teal-50 text-slate-700 hover:text-teal-700 text-xs font-semibold transition-colors cursor-pointer"
+        >
+          <Radio className="w-3.5 h-3.5" />
+          <span>Switch to Live Dispatch System</span>
+        </button>
+      </div>
+
+      {/* Header section */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-[2rem] border border-slate-100 shadow-xs">
         <div>
           <div className="flex items-center gap-3">
@@ -888,7 +914,15 @@ export function OperationsHubModule({ users, onDataChange }: OperationsHubModule
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => navigate('/operations-hub/LiveDispatchSystem')}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-xs flex items-center gap-1.5"
+          >
+            <Radio className="w-4 h-4" />
+            <span>Live Dispatch System | نظام التوزيع اللحظي</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
           <button 
             onClick={() => {
               setWorkOrderForm({ id: null, title: '', customer_name: '', status: displayStages[0]?.name || 'Pending', execution_agent_id: null, delivery_agent_id: null, sale_value: 0, actual_cost_total: 0, items: [], expected_start_date: '', due_date: '', supervisor_id: null, assignment_date: null, completion_date: null, qa_status: 'Pending Review', qa_feedback: '' });
@@ -1058,6 +1092,13 @@ export function OperationsHubModule({ users, onDataChange }: OperationsHubModule
             }`}
           >
             Quality Assurance & Review | مراجعة وضمان الجودة
+          </button>
+          <button
+            onClick={() => navigate('/operations-hub/LiveDispatchSystem')}
+            className="pb-3 text-xs font-black transition-all border-b-2 whitespace-nowrap relative text-blue-600 border-transparent hover:border-blue-600 flex items-center gap-1.5"
+          >
+            <Radio className="w-3.5 h-3.5" />
+            <span>Live Dispatch System | نظام التوزيع اللحظي</span>
           </button>
         </div>
       </div>
