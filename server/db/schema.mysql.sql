@@ -2854,6 +2854,312 @@ CREATE INDEX idx_notifications_user_company ON notifications(user_id, company_id
 CREATE INDEX idx_notifications_unread ON notifications(user_id, is_read);
 
 -- ================================================================================
+-- SECTION 12: OPERATIONS HUB - LIVE DISPATCH SYSTEM TABLES
+-- ================================================================================
+
+CREATE TABLE IF NOT EXISTS dispatch_teams (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    name VARCHAR(191) NOT NULL,
+    city VARCHAR(120) DEFAULT 'الجيزة',
+    zone_coverage VARCHAR(255) DEFAULT '',
+    store_code VARCHAR(80) DEFAULT '',
+    max_trip_capacity INT DEFAULT 4,
+    is_active TINYINT(1) DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_providers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    name VARCHAR(191) NOT NULL,
+    contact_phone VARCHAR(60) DEFAULT '',
+    commission_rate DOUBLE DEFAULT 0,
+    is_active TINYINT(1) DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_riders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    enroll_id VARCHAR(60) DEFAULT '',
+    name VARCHAR(191) NOT NULL,
+    team_id INT NULL,
+    team_name VARCHAR(191) DEFAULT '',
+    provider_name VARCHAR(191) DEFAULT '',
+    mobile_number VARCHAR(60) DEFAULT '',
+    acc_number VARCHAR(80) DEFAULT '',
+    payroll_method VARCHAR(80) DEFAULT '',
+    payroll_method_number VARCHAR(120) DEFAULT '',
+    status VARCHAR(40) DEFAULT 'Off Duty',
+    logged_in TINYINT(1) DEFAULT 1,
+    on_demand TINYINT(1) DEFAULT 0,
+    rating DOUBLE DEFAULT 0,
+    app_version VARCHAR(40) DEFAULT '2026.10.03',
+    device_type VARCHAR(40) DEFAULT 'android',
+    bundle_name VARCHAR(120) DEFAULT '',
+    national_id VARCHAR(80) DEFAULT '',
+    vehicle_type VARCHAR(60) DEFAULT 'Motorcycle',
+    zone_coverage VARCHAR(255) DEFAULT '',
+    hiring_date DATE NULL,
+    expiration_iqama_date DATE NULL,
+    lat DOUBLE DEFAULT 30.0085,
+    lng DOUBLE DEFAULT 31.1895,
+    last_location_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    active_orders_count INT DEFAULT 0,
+    is_archived TINYINT(1) DEFAULT 0,
+    archive_reason VARCHAR(255) DEFAULT '',
+    archived_at DATETIME NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_trips (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    trip_number VARCHAR(80) NOT NULL,
+    trip_type VARCHAR(120) DEFAULT '',
+    team_id INT NULL,
+    team_name VARCHAR(191) DEFAULT '',
+    rider_id INT NULL,
+    rider_name VARCHAR(191) DEFAULT '',
+    status VARCHAR(40) DEFAULT 'Running',
+    performance VARCHAR(40) DEFAULT 'NOT_RATED',
+    is_manual TINYINT(1) DEFAULT 0,
+    orders_count INT DEFAULT 0,
+    expecting_duration_min DOUBLE DEFAULT 0,
+    trip_duration_min DOUBLE DEFAULT 0,
+    trip_distance_km DOUBLE DEFAULT 0,
+    returning_duration_min DOUBLE DEFAULT 0,
+    estimate_returning_min DOUBLE DEFAULT 0,
+    planned_return_distance_km DOUBLE DEFAULT 0,
+    total_amount DOUBLE DEFAULT 0,
+    delivery_zone_extra_fees DOUBLE DEFAULT 0,
+    live_location_percentage DOUBLE DEFAULT 100,
+    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_orders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    order_number VARCHAR(80) NOT NULL,
+    service_number VARCHAR(80) DEFAULT '',
+    trip_id INT NULL,
+    trip_number VARCHAR(80) DEFAULT '',
+    team_id INT NULL,
+    team_name VARCHAR(191) DEFAULT '',
+    store_name VARCHAR(191) DEFAULT '',
+    store_code VARCHAR(80) DEFAULT '',
+    brand VARCHAR(120) DEFAULT '',
+    city VARCHAR(120) DEFAULT 'الجيزة',
+    governorate VARCHAR(120) DEFAULT '',
+    customer_name VARCHAR(191) NOT NULL,
+    customer_mobile VARCHAR(60) DEFAULT '',
+    customer_zone VARCHAR(191) DEFAULT '',
+    address TEXT,
+    lat DOUBLE DEFAULT 30.0112,
+    lng DOUBLE DEFAULT 31.1924,
+    rider_id INT NULL,
+    rider_name VARCHAR(191) DEFAULT '',
+    rider_mobile VARCHAR(60) DEFAULT '',
+    provider_name VARCHAR(191) DEFAULT '',
+    status VARCHAR(40) DEFAULT 'Ready',
+    performance VARCHAR(40) DEFAULT 'NOT_RATED',
+    amount DOUBLE DEFAULT 0,
+    balance_due DOUBLE DEFAULT 0,
+    payment_type VARCHAR(30) DEFAULT 'Cash',
+    is_manual TINYINT(1) DEFAULT 0,
+    is_abused TINYINT(1) DEFAULT 0,
+    abuse_reason VARCHAR(255) DEFAULT '',
+    remove_abuse_requested TINYINT(1) DEFAULT 0,
+    is_transferred TINYINT(1) DEFAULT 0,
+    in_zone TINYINT(1) DEFAULT 1,
+    vehicle_type VARCHAR(60) DEFAULT 'Motorcycle',
+    note TEXT,
+    description TEXT,
+    created_by VARCHAR(120) DEFAULT 'System',
+    set_as_ready_by VARCHAR(120) DEFAULT '',
+    shift_date DATE NULL,
+    order_date DATE NULL,
+    order_category VARCHAR(120) DEFAULT '',
+    order_type VARCHAR(120) DEFAULT '',
+    service_urgency VARCHAR(60) DEFAULT 'Standard',
+    document_receipt VARCHAR(80) DEFAULT 'Not Applicable',
+    operations_status VARCHAR(60) DEFAULT 'New',
+    hold_reason VARCHAR(255) DEFAULT '',
+    operations_officer VARCHAR(191) DEFAULT '',
+    current_queue VARCHAR(100) DEFAULT 'Government',
+    current_stage VARCHAR(191) DEFAULT '',
+    case_priority VARCHAR(40) DEFAULT 'Normal',
+    payment_status VARCHAR(60) DEFAULT 'Unpaid',
+    ready_to_close_sale TINYINT(1) DEFAULT 0,
+    sales_status VARCHAR(60) DEFAULT 'Open',
+    individuals_completed INT DEFAULT 0,
+    individuals_total INT DEFAULT 1,
+    files_json LONGTEXT,
+    operational_files_json LONGTEXT,
+    service_units_json LONGTEXT,
+    operations_executions_json LONGTEXT,
+    representatives_json LONGTEXT,
+    change_history_json LONGTEXT,
+    scheduled_for DATETIME NULL,
+    order_duration_min DOUBLE DEFAULT 0,
+    distance_km DOUBLE DEFAULT 0,
+    map_distance_km DOUBLE DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_shifts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    rider_id INT NULL,
+    rider_name VARCHAR(191) NOT NULL,
+    team_name VARCHAR(191) DEFAULT '',
+    shift_date DATE NULL,
+    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    ended_at DATETIME NULL,
+    status VARCHAR(30) DEFAULT 'Active',
+    orders_completed INT DEFAULT 0,
+    cash_collected DOUBLE DEFAULT 0,
+    revenue_total DOUBLE DEFAULT 0,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_stores (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    name VARCHAR(191) NOT NULL,
+    brand VARCHAR(120) DEFAULT '',
+    code VARCHAR(80) DEFAULT '',
+    city VARCHAR(120) DEFAULT 'Cairo',
+    address TEXT,
+    lat DOUBLE DEFAULT 29.99884,
+    lng DOUBLE DEFAULT 31.159592,
+    is_active TINYINT(1) DEFAULT 1,
+    config_json LONGTEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_customer_zones (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    store_id INT NOT NULL,
+    name VARCHAR(191) NOT NULL,
+    city VARCHAR(120) DEFAULT 'Cairo',
+    has_geofence TINYINT(1) DEFAULT 0,
+    geofence_radius_m INT DEFAULT 1000,
+    geofence_polygon_json LONGTEXT,
+    geofence_color VARCHAR(32) DEFAULT '#0d9488',
+    lat DOUBLE DEFAULT 29.99884,
+    lng DOUBLE DEFAULT 31.159592,
+    default_vehicle_type VARCHAR(60) DEFAULT 'Motorcycle',
+    extra_fees DOUBLE DEFAULT 0,
+    is_active TINYINT(1) DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_smart_routes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    store_id INT NOT NULL,
+    name VARCHAR(191) NOT NULL,
+    zone_ids_json LONGTEXT,
+    is_active TINYINT(1) DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_wallet_transactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    team_id INT NULL,
+    team_name VARCHAR(191) DEFAULT '',
+    provider_name VARCHAR(191) DEFAULT '',
+    rider_id INT NULL,
+    rider_name VARCHAR(191) NOT NULL,
+    enroll_id VARCHAR(60) DEFAULT '',
+    trip_id INT NULL,
+    trip_number VARCHAR(80) DEFAULT '',
+    transaction_type VARCHAR(60) DEFAULT 'COMPLETE_TRIP',
+    is_award TINYINT(1) DEFAULT 1,
+    amount DOUBLE DEFAULT 0,
+    currency VARCHAR(16) DEFAULT 'EGP',
+    notes TEXT,
+    created_by VARCHAR(120) DEFAULT 'System',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_reasons (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    category VARCHAR(60) NOT NULL,
+    name VARCHAR(191) NOT NULL,
+    reason_type VARCHAR(80) DEFAULT '',
+    is_active TINYINT(1) DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_rider_revenue_rules (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    scope VARCHAR(20) NOT NULL DEFAULT 'company',
+    team_id INT NULL,
+    team_name VARCHAR(191) DEFAULT '',
+    online_shift_hours_enabled TINYINT(1) DEFAULT 0,
+    online_shift_hour_price DOUBLE DEFAULT 0,
+    excellent_trip_revenue DOUBLE DEFAULT 2,
+    good_trip_revenue DOUBLE DEFAULT 1,
+    late_trip_revenue DOUBLE DEFAULT 0,
+    abuse_trip_deduction DOUBLE DEFAULT 12,
+    order_rev_excellent DOUBLE DEFAULT 0,
+    order_rev_good DOUBLE DEFAULT 0,
+    order_rev_late DOUBLE DEFAULT 0,
+    order_rev_abuse DOUBLE DEFAULT 0,
+    trip_ignoring_enabled TINYINT(1) DEFAULT 0,
+    trip_ignoring_deduction DOUBLE DEFAULT 0,
+    trip_ignoring_penalization_enabled TINYINT(1) DEFAULT 0,
+    trip_ignoring_penalization_deduction DOUBLE DEFAULT 0,
+    rider_abuse_penalization_enabled TINYINT(1) DEFAULT 0,
+    rider_abuse_penalization_deduction DOUBLE DEFAULT 0,
+    currency VARCHAR(16) DEFAULT 'EGP',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_trip_types (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT DEFAULT 1,
+    name VARCHAR(191) NOT NULL,
+    code VARCHAR(60) DEFAULT '',
+    description TEXT,
+    base_fee DOUBLE DEFAULT 0,
+    max_orders INT DEFAULT 4,
+    is_active TINYINT(1) DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_dispatch_orders_company_status ON dispatch_orders(company_id, status);
+CREATE INDEX idx_dispatch_orders_trip_id ON dispatch_orders(trip_id);
+CREATE INDEX idx_dispatch_trips_company_status ON dispatch_trips(company_id, status);
+CREATE INDEX idx_dispatch_riders_company_status ON dispatch_riders(company_id, status);
+CREATE INDEX idx_dispatch_shifts_company_rider ON dispatch_shifts(company_id, rider_id);
+CREATE INDEX idx_dispatch_zones_store ON dispatch_customer_zones(company_id, store_id);
+CREATE INDEX idx_dispatch_routes_store ON dispatch_smart_routes(company_id, store_id);
+CREATE INDEX idx_dispatch_wallet_tx_company_rider ON dispatch_wallet_transactions(company_id, rider_id, created_at);
+CREATE INDEX idx_dispatch_reasons_company_cat ON dispatch_reasons(company_id, category);
+CREATE INDEX idx_dispatch_rider_rev_company_scope ON dispatch_rider_revenue_rules(company_id, scope, team_id);
+CREATE INDEX idx_dispatch_trip_types_company ON dispatch_trip_types(company_id, is_active);
+
+-- ================================================================================
 -- END OF SCHEMA DEFINITION
 -- ================================================================================
 
