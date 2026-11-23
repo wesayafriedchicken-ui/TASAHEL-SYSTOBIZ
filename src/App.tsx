@@ -202,6 +202,20 @@ import {
 import ErrorBoundary from './components/ErrorBoundary';
 import { ScreenGuard } from './components/Common/ScreenGuard';
 import { OperationsHubModule } from './components/OperationsHub/OperationsHubModule';
+import { OperationsHubLauncherPage } from './components/OperationsHub/OperationsHubLauncherPage';
+import { LiveDispatchLayout } from './components/OperationsHub/LiveDispatch/LiveDispatchLayout';
+import { LiveDispatchHubPage } from './components/OperationsHub/LiveDispatch/LiveDispatchHubPage';
+import { LiveDispatchOrdersPage } from './components/OperationsHub/LiveDispatch/LiveDispatchOrdersPage';
+import { LiveDispatchOrderFormPage } from './components/OperationsHub/LiveDispatch/LiveDispatchOrderFormPage';
+import { LiveDispatchBoardPage } from './components/OperationsHub/LiveDispatch/LiveDispatchBoardPage';
+import { LiveTrackingPage } from './components/OperationsHub/LiveDispatch/LiveTrackingPage';
+import { LiveDispatchTripsPage } from './components/OperationsHub/LiveDispatch/LiveDispatchTripsPage';
+import { LiveDispatchRidersPage } from './components/OperationsHub/LiveDispatch/LiveDispatchRidersPage';
+import { LiveDispatchStorePage } from './components/OperationsHub/LiveDispatch/LiveDispatchStorePage';
+import { LiveDispatchStoreSettingsPage } from './components/OperationsHub/LiveDispatch/LiveDispatchStoreSettingsPage';
+import { LiveDispatchGeoFencePage } from './components/OperationsHub/LiveDispatch/LiveDispatchGeoFencePage';
+import { LiveDispatchSmartRoutesPage } from './components/OperationsHub/LiveDispatch/LiveDispatchSmartRoutesPage';
+import { LiveDispatchAccountingPage } from './components/OperationsHub/LiveDispatch/LiveDispatchAccountingPage';
 import QA from './components/QA/QA';
 import { PermissionGate } from './components/Admin/PermissionGate';
 import { useRBAC } from './context/RBACContext';
@@ -5918,10 +5932,7 @@ export default function App() {
         <Navigate to="/sales/dashboard" replace />
       );
       case 'operations-hub': return (
-        <OperationsHubModule 
-          users={users}
-          onDataChange={fetchInitialData}
-        />
+        <OperationsHubLauncherPage />
       );
       case 'marketing': return (
         <MarketingHubModule 
@@ -6475,10 +6486,84 @@ export default function App() {
                 <Route path="/acct" element={<Navigate to="/accounting/dashboard" replace />} />
                 <Route path="/acct/*" element={<Navigate to="/accounting/dashboard" replace />} />
 
+                {/* Operations Hub — Launcher & Overview */}
+                <Route path="/operations-hub" element={<OperationsHubLauncherPage />} />
+                <Route
+                  path="/operations-hub/Overview"
+                  element={
+                    <ErrorBoundary fallbackModuleName="Operations Hub Overview">
+                      <OperationsHubModule users={users} onDataChange={fetchInitialData} />
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/operations-hub/overview"
+                  element={
+                    <ErrorBoundary fallbackModuleName="Operations Hub Overview">
+                      <OperationsHubModule users={users} onDataChange={fetchInitialData} />
+                    </ErrorBoundary>
+                  }
+                />
+
+                {/* Operations Hub — Live Dispatch System */}
+                <Route path="/operations-hub/LiveDispatchSystem" element={
+                  <ErrorBoundary fallbackModuleName="Live Dispatch System">
+                    <LiveDispatchLayout />
+                  </ErrorBoundary>
+                }>
+                  <Route index element={<LiveDispatchHubPage />} />
+                  <Route path="orders" element={<LiveDispatchOrdersPage />} />
+                  <Route path="orders/New" element={<LiveDispatchOrderFormPage />} />
+                  <Route path="orders/new" element={<LiveDispatchOrderFormPage />} />
+                  <Route path="orders/:id" element={<LiveDispatchOrderFormPage />} />
+                  <Route path="Orders" element={<LiveDispatchOrdersPage />} />
+                  <Route path="Orders/New" element={<LiveDispatchOrderFormPage />} />
+                  <Route path="Orders/new" element={<LiveDispatchOrderFormPage />} />
+                  <Route path="Orders/:id" element={<LiveDispatchOrderFormPage />} />
+                  <Route path="Dispatch" element={<LiveDispatchBoardPage />} />
+                  <Route path="dispatch" element={<LiveDispatchBoardPage />} />
+                  <Route path="live-tracking" element={<LiveTrackingPage />} />
+                  <Route path="Live-Tracking" element={<LiveTrackingPage />} />
+                  <Route path="trip" element={<LiveDispatchTripsPage />} />
+                  <Route path="Trip" element={<LiveDispatchTripsPage />} />
+                  <Route path="trips" element={<LiveDispatchTripsPage />} />
+                  <Route path="Riders" element={<LiveDispatchRidersPage />} />
+                  <Route path="riders" element={<LiveDispatchRidersPage />} />
+                  <Route path="Accounting" element={<LiveDispatchAccountingPage defaultTab="store" />} />
+                  <Route path="accounting" element={<LiveDispatchAccountingPage defaultTab="store" />} />
+                  <Route path="accounting/wallet/store" element={<LiveDispatchAccountingPage defaultTab="store" />} />
+                  <Route path="Accounting/wallet/store" element={<LiveDispatchAccountingPage defaultTab="store" />} />
+                  <Route path="accounting/wallet/agent" element={<LiveDispatchAccountingPage defaultTab="agent" />} />
+                  <Route path="Accounting/wallet/agent" element={<LiveDispatchAccountingPage defaultTab="agent" />} />
+                  <Route path="accounting/wallet/transaction" element={<LiveDispatchAccountingPage defaultTab="transaction" />} />
+                  <Route path="Accounting/wallet/transaction" element={<LiveDispatchAccountingPage defaultTab="transaction" />} />
+                  <Route path="Store" element={<LiveDispatchStorePage />} />
+                  <Route path="store" element={<LiveDispatchStorePage />} />
+                  <Route path="Store/settings" element={<LiveDispatchStoreSettingsPage />} />
+                  <Route path="store/settings" element={<LiveDispatchStoreSettingsPage />} />
+                  <Route path="Store/Settings" element={<LiveDispatchStoreSettingsPage />} />
+                  <Route path="Store/Smart Routes" element={<LiveDispatchSmartRoutesPage />} />
+                  <Route path="store/smart routes" element={<LiveDispatchSmartRoutesPage />} />
+                  <Route path="Store/smart-routes" element={<LiveDispatchSmartRoutesPage />} />
+                  <Route path="Store/Smart Routes/Routes" element={<LiveDispatchSmartRoutesPage />} />
+                  <Route path="store/smart routes/routes" element={<LiveDispatchSmartRoutesPage />} />
+                  <Route path="Store/smart-routes/routes" element={<LiveDispatchSmartRoutesPage />} />
+                  <Route path="Store/Smart Routes/Routes/Create" element={<LiveDispatchSmartRoutesPage initialMode="create" />} />
+                  <Route path="store/smart routes/routes/create" element={<LiveDispatchSmartRoutesPage initialMode="create" />} />
+                  <Route path="Store/Smart Routes/DeliveryzonesGeoFence" element={<LiveDispatchGeoFencePage />} />
+                  <Route path="store/smart routes/deliveryzonesgeofence" element={<LiveDispatchGeoFencePage />} />
+                  <Route path="Store/smart-routes/deliveryzonesgeofence" element={<LiveDispatchGeoFencePage />} />
+                  <Route path="*" element={<Navigate to="/operations-hub/LiveDispatchSystem" replace />} />
+                </Route>
+                <Route path="/operations-hub/livedispatchsystem" element={<Navigate to="/operations-hub/LiveDispatchSystem" replace />} />
+                <Route path="/operations-hub/livedispatchsystem/*" element={<Navigate to="/operations-hub/LiveDispatchSystem" replace />} />
+                <Route path="/operations-hub/live-dispatch-system" element={<Navigate to="/operations-hub/LiveDispatchSystem" replace />} />
+                <Route path="/operations-hub/live-dispatch-system/*" element={<Navigate to="/operations-hub/LiveDispatchSystem" replace />} />
+
                 {Array.from(new Set([
                   ...MODULES.map(m => m.id),
                   ...systemModules.map(m => m.id)
-                ])).filter(mId => mId !== 'hr' && mId !== 'admin' && mId !== 'qa' && mId !== 'kb' && mId !== 'catalog' && mId !== 'products' && mId !== 'comm' && mId !== 'crm' && mId !== 'sales' && mId !== 'sops' && mId !== 'tasks' && mId !== 'acct' && mId !== 'accounting').map(moduleId => (
+                ])).filter(mId => mId !== 'hr' && mId !== 'admin' && mId !== 'qa' && mId !== 'kb' && mId !== 'catalog' && mId !== 'products' && mId !== 'comm' && mId !== 'crm' && mId !== 'sales' && mId !== 'sops' && mId !== 'tasks' && mId !== 'acct' && mId !== 'accounting' && mId !== 'operations-hub').map(moduleId => (
                   <Route key={moduleId} path={`/${moduleId}`} element={renderContent(moduleId)} />
                 ))}
                 <Route path="/" element={<Navigate to="/home" replace />} />
