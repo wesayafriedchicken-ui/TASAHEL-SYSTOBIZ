@@ -2,6 +2,7 @@ import express from "express";
 import { pool } from "../../db/schema.js";
 import { logAction } from "../../services/auditLogger.js";
 import { memoryCache } from "../../utils/cache.js";
+import liveDispatchRoutes from "./liveDispatch.routes.js";
 
 // Helper to update/create direct operational expense journal entry in Accounting Module
 async function syncJournalEntryForWorkOrder(workOrderId: number, title: string, actualCost: number, companyId: number) {
@@ -128,6 +129,9 @@ export async function createWorkOrderFromDeal(dealId: number, companyId: number 
 
 export default function operationsHubRoutes(wss: any) {
   const router = express.Router();
+
+  // Mount Live Dispatch System endpoints (/api/operations/live-dispatch/*)
+  router.use("/live-dispatch", liveDispatchRoutes(wss));
 
   // GET all operation stages
   router.get("/stages", async (req, res) => {
