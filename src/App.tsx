@@ -18,7 +18,7 @@ import {
   ChevronDown, ChevronUp, GripVertical, Award, CheckCircle, Share2, Calculator,
   Kanban, Table,
   Sparkles, Target, BarChart2, Upload, FileSpreadsheet, Rocket, DollarSign, UserCircle,
-  Package, ShieldAlert, Home
+  Package, ShieldAlert, Home, Building2, Archive
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import Markdown from 'react-markdown';
@@ -81,6 +81,14 @@ import TasksModule from './components/Tasks/TasksModule';
 import ProductsModule from './components/Products/ProductsModule';
 import { MarketingHubModule } from './components/MarketingHub/MarketingHubModule';
 import HRManagement from './components/HR/HRManagement';
+import {
+  SidebarModuleTree,
+  buildHrSidebarPages,
+  buildQaSidebarPages,
+  SIDEBAR_CATEGORIES,
+  SIDEBAR_CATEGORY_MAP,
+  getSidebarModuleRoute
+} from './components/Layout/SidebarModuleTree';
 import { HRLayout } from './pages/HR/HRLayout';
 import { HRHubPage } from './pages/HR/HRHubPage';
 import { EmployeeListPage } from './pages/HR/Directory/EmployeeListPage';
@@ -323,10 +331,54 @@ const Sidebar = ({
   sidebarMode?: 'expanded' | 'collapsed' | 'hover',
   setSidebarMode?: (mode: 'expanded' | 'collapsed' | 'hover') => void
 }) => {
-  const { user, logout, previewRole, checkPermission } = useAuth();
-  const { isModuleVisible } = useRBAC();
+  const { user, logout, previewRole, checkPermission, canRead, getPermLevel } = useAuth();
+  const { isModuleVisible, isScreenHidden } = useRBAC();
   const navigate = useNavigate();
+  const location = useLocation();
   const isSuperAdmin = !previewRole && (user?.role_id === 1 || (user as any)?.is_super_admin || user?.role === 'Admin' || user?.role_name === 'Admin' || user?.email === 'admin@gmail.com' || user?.email === 'admin@opex.com');
+  const isHRAdmin = useMemo(() => {
+    if (isSuperAdmin) return true;
+    const roleStr = String((user as any)?.role_name || (user as any)?.role || '').toLowerCase();
+    return !previewRole && (roleStr.includes('hr admin') || roleStr.includes('hr manager'));
+  }, [isSuperAdmin, user, previewRole]);
+
+  const [expandedModule, setExpandedModule] = useState<string | null>(() => {
+    if (location.pathname.startsWith('/hr')) return 'hr';
+    if (location.pathname.startsWith('/qa')) return 'qa';
+    return null;
+  });
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/hr')) {
+      setExpandedModule('hr');
+    } else if (location.pathname.startsWith('/qa')) {
+      setExpandedModule('qa');
+    }
+  }, [location.pathname]);
+
+  const hrPages = useMemo(
+    () =>
+      buildHrSidebarPages({
+        isHRAdmin,
+        isSuperAdmin,
+        isScreenHidden,
+        getPermLevel,
+        canRead,
+        checkPermission: checkPermission as any
+      }),
+    [isHRAdmin, isSuperAdmin, isScreenHidden, getPermLevel, canRead, checkPermission]
+  );
+
+  const qaPages = useMemo(
+    () =>
+      buildQaSidebarPages({
+        isSuperAdmin,
+        isScreenHidden,
+        canRead,
+        checkPermission: checkPermission as any
+      }),
+    [isSuperAdmin, isScreenHidden, canRead, checkPermission]
+  );
 
   const canAccessModule = useCallback((moduleId: string, moduleName?: string): boolean => {
     if (isSuperAdmin) return true;
@@ -467,17 +519,35 @@ const Sidebar = ({
     }
   };
 
+  const resolveSidebarModule = useCallback((moduleId: string) => {
+    let mod = MODULES.find(m => m.id === moduleId);
+    if (!mod) {
+      const sysMod = systemModules.find(sm => sm.id === moduleId);
+      if (sysMod) {
+        const IconComponent = (sysMod.metadata?.icon && (LucideIcons as any)[sysMod.metadata.icon]) || Database;
+        mod = {
+          id: sysMod.id,
+          name: sysMod.name,
+          icon: IconComponent,
+          color: 'text-indigo-500',
+          is_active: sysMod.is_active
+        } as any;
+      }
+    }
+    return mod || null;
+  }, [systemModules]);
+
   const groups = [
-    { id: 'g1', items: ['home', 'dashboard', 'ai-business', 'meeting-hub'] },
-    { id: 'g2', items: ['business-model', 'kpis', 'risk'] },
-    { id: 'g3', items: ['marketing', 'leads', 'crm', 'operations-hub', 'acct', 'products'] },
-    { id: 'g4', items: ['sops', 'process-mapping', 'raci', 'tasks'] },
-    { id: 'g5', items: ['hr', 'training', 'kb', 'comm'] },
-    { id: 'g6', items: ['qa', 'kaizen'] },
-    { id: 'g7', items: ['automation', 'integration', 'build', 'admin'] }
+    { id: 'g1', items: ['home'] },
+    { id: 'g2', items: ['cat-executive', 'cat-collaboration', 'cat-sales-marketing', 'cat-operations-process'] },
+    { id: 'g3', items: ['acct', 'hr', 'training', 'qa'] },
+    { id: 'g4', items: ['cat-setting'] }
   ];
 
-  const staticItems = groups.flatMap(g => g.items);
+  const staticItems = [
+    ...groups.flatMap(g => g.items.filter(id => !SIDEBAR_CATEGORY_MAP[id])),
+    ...SIDEBAR_CATEGORIES.flatMap(cat => cat.moduleIds)
+  ];
   const customItems = systemModules
     .filter(sm => !staticItems.includes(sm.id))
     .map(sm => sm.id);
@@ -580,20 +650,15 @@ const Sidebar = ({
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 px-1.5 space-y-2 custom-scrollbar">
         {finalGroups.map((group, groupIdx) => {
           // Filter items in the group that the user is authorized to access
-          const visibleItems = group.items.filter((moduleId) => {
-            let module = MODULES.find(m => m.id === moduleId);
-            if (!module) {
-              const sysMod = systemModules.find(sm => sm.id === moduleId);
-              if (sysMod) {
-                module = {
-                  id: sysMod.id,
-                  name: sysMod.name,
-                  icon: Database,
-                  color: 'text-indigo-500',
-                  is_active: sysMod.is_active
-                } as any;
-              }
+          const visibleItems = group.items.filter((itemId) => {
+            const category = SIDEBAR_CATEGORY_MAP[itemId];
+            if (category) {
+              return category.moduleIds.some((childId) => {
+                const childMod = resolveSidebarModule(childId);
+                return childMod ? canAccessModule(childMod.id, childMod.name) : false;
+              });
             }
+            const module = resolveSidebarModule(itemId);
             if (!module) return false;
             return canAccessModule(module.id, module.name);
           });
@@ -607,62 +672,218 @@ const Sidebar = ({
                   <span className="text-[9px] font-black tracking-wider text-slate-500 uppercase truncate block">Custom Modules</span>
                 </div>
               )}
-              {visibleItems.map((moduleId) => {
-                let module = MODULES.find(m => m.id === moduleId);
-                if (!module) {
-                  const sysMod = systemModules.find(sm => sm.id === moduleId);
-                  if (sysMod) {
-                    const IconComponent = (sysMod.metadata?.icon && (LucideIcons as any)[sysMod.metadata.icon]) || Database;
-                    module = {
-                      id: sysMod.id,
-                      name: sysMod.name,
-                      icon: IconComponent,
-                      color: 'text-indigo-500',
-                      is_active: sysMod.is_active
-                    } as any;
-                  }
+              {visibleItems.map((itemId) => {
+                const category = SIDEBAR_CATEGORY_MAP[itemId];
+
+                if (category) {
+                  const CategoryIcon = category.icon;
+                  const visibleChildren = category.moduleIds
+                    .map((childId) => resolveSidebarModule(childId))
+                    .filter((childMod): childMod is NonNullable<typeof childMod> =>
+                      Boolean(childMod && canAccessModule(childMod.id, childMod.name))
+                    );
+
+                  if (visibleChildren.length === 0) return null;
+
+                  const isCategoryOpen = expandedModule === category.id;
+                  const isCategoryActive = visibleChildren.some((child) => child.id === activeModule);
+
+                  return (
+                    <div key={category.id} className="w-full">
+                      <button
+                        type="button"
+                        title={category.name}
+                        aria-expanded={isCategoryOpen}
+                        onClick={() => {
+                          if (!isEffectiveExpanded) {
+                            const firstChild = visibleChildren[0];
+                            if (firstChild) {
+                              setActiveModule(firstChild.id);
+                              navigate(getSidebarModuleRoute(firstChild.id));
+                            }
+                            return;
+                          }
+                          setExpandedModule((prev) => (prev === category.id ? null : category.id));
+                        }}
+                        className={cn(
+                          "w-full flex items-center rounded-lg transition-all duration-200 group relative text-left overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/60",
+                          isEffectiveExpanded ? "gap-2 px-2 py-1.5" : "p-2 justify-center",
+                          isCategoryActive
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold"
+                            : "hover:bg-slate-800/80 hover:text-white font-medium"
+                        )}
+                      >
+                        <CategoryIcon
+                          className={cn(
+                            "w-4 h-4 shrink-0 transition-colors",
+                            isCategoryActive ? "text-emerald-400" : "text-slate-400 group-hover:text-slate-200"
+                          )}
+                        />
+                        {isEffectiveExpanded && (
+                          <>
+                            <span className="text-[11px] leading-tight truncate flex-1 min-w-0">
+                              {category.name}
+                            </span>
+                            <ChevronDown
+                              className={cn(
+                                "w-3.5 h-3.5 shrink-0 transition-transform duration-200",
+                                isCategoryActive ? "text-emerald-400" : "text-slate-400 group-hover:text-slate-200",
+                                isCategoryOpen && "rotate-180"
+                              )}
+                            />
+                          </>
+                        )}
+                      </button>
+
+                      {isEffectiveExpanded && (
+                        <AnimatePresence initial={false}>
+                          {isCategoryOpen && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                              className="overflow-hidden"
+                            >
+                              <div className="mt-1 ml-3.5 pl-2 border-l border-white/10 space-y-0.5 pb-1">
+                                {visibleChildren.map((child) => {
+                                  const ChildIcon = child.icon;
+                                  const childSysMod = systemModules.find(sm => sm.id === child.id);
+                                  const isChildActive = activeModule === child.id;
+
+                                  return (
+                                    <button
+                                      key={child.id}
+                                      type="button"
+                                      title={child.name}
+                                      onClick={() => {
+                                        setActiveModule(child.id);
+                                        setExpandedModule(category.id);
+                                        navigate(getSidebarModuleRoute(child.id));
+                                      }}
+                                      className={cn(
+                                        "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors duration-150 group/sub cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/60",
+                                        isChildActive
+                                          ? "bg-emerald-500/15 text-emerald-300 font-semibold"
+                                          : "text-slate-300/85 hover:text-white hover:bg-white/[0.06] font-medium"
+                                      )}
+                                    >
+                                      <ChildIcon
+                                        className={cn(
+                                          "w-3.5 h-3.5 shrink-0 transition-colors",
+                                          isChildActive
+                                            ? "text-emerald-400"
+                                            : "text-slate-400 group-hover/sub:text-slate-200"
+                                        )}
+                                      />
+                                      <span className="text-[11.5px] leading-snug tracking-[0.01em] truncate whitespace-nowrap flex-1 min-w-0">
+                                        {child.name}
+                                      </span>
+                                      {isSuperAdmin && childSysMod?.is_active === false && (
+                                        <span className="ml-auto text-[7px] font-black bg-slate-800 text-slate-400 px-1 py-0.2 rounded uppercase border border-slate-700 shrink-0">
+                                          Hidden
+                                        </span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      )}
+                    </div>
+                  );
                 }
+
+                const module = resolveSidebarModule(itemId);
                 if (!module) return null;
                 const sysModule = systemModules.find(sm => sm.id === module.id);
 
+                const isExpandableModule = module.id === 'hr' || module.id === 'qa';
+                const moduleKey = isExpandableModule ? (module.id as 'hr' | 'qa') : null;
+                const isModuleMenuOpen = moduleKey !== null && expandedModule === moduleKey;
+                const moduleTreePages = module.id === 'hr' ? hrPages : module.id === 'qa' ? qaPages : [];
+
                 return (
-                  <button
-                    key={module.id}
-                    type="button"
-                    title={module.name}
-                    onClick={() => {
-                      setActiveModule(module.id);
-                      navigate(
-                        module.id === 'products' ? '/catalog/dashboard' : 
-                        module.id === 'comm' ? '/comm/channels/1' : 
-                        module.id === 'crm' ? '/sales/dashboard' : 
-                        module.id === 'sops' ? '/sops/dashboard' : 
-                        module.id === 'tasks' ? '/tasks/board' : 
-                        module.id === 'acct' ? '/accounting/dashboard' :
-                        '/' + module.id
-                      );
-                    }}
-                    className={cn(
-                      "w-full flex items-center rounded-lg transition-all duration-200 group relative text-left overflow-hidden",
-                      isEffectiveExpanded ? "gap-2 px-2 py-1.5" : "p-2 justify-center",
-                      activeModule === module.id 
-                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold" 
-                        : "hover:bg-slate-800/80 hover:text-white font-medium"
-                    )}
-                  >
-                    <module.icon className={cn("w-4 h-4 shrink-0 transition-colors", activeModule === module.id ? "text-emerald-400" : "text-slate-400 group-hover:text-slate-200")} />
-                    {isEffectiveExpanded && (
-                      <>
-                        <span className="text-[11px] leading-tight truncate flex-1 min-w-0">{module.name}</span>
-                        {isSuperAdmin && sysModule?.is_active === false && (
-                          <span className="ml-auto text-[7px] font-black bg-slate-800 text-slate-400 px-1 py-0.2 rounded uppercase border border-slate-700 shrink-0">Hidden</span>
+                  <div key={module.id} className="w-full">
+                    <button
+                      type="button"
+                      title={module.name}
+                      aria-expanded={isExpandableModule ? isModuleMenuOpen : undefined}
+                      onClick={() => {
+                        if (moduleKey) {
+                          const basePrefix = '/' + moduleKey;
+                          if (activeModule === moduleKey && location.pathname.startsWith(basePrefix)) {
+                            setExpandedModule((prev) => (prev === moduleKey ? null : moduleKey));
+                          } else {
+                            setActiveModule(moduleKey);
+                            setExpandedModule(moduleKey);
+                            navigate(basePrefix);
+                          }
+                          return;
+                        }
+                        setExpandedModule(null);
+                        setActiveModule(module.id);
+                        navigate(getSidebarModuleRoute(module.id));
+                      }}
+                      className={cn(
+                        "w-full flex items-center rounded-lg transition-all duration-200 group relative text-left overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/60",
+                        isEffectiveExpanded ? "gap-2 px-2 py-1.5" : "p-2 justify-center",
+                        activeModule === module.id 
+                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold" 
+                          : "hover:bg-slate-800/80 hover:text-white font-medium"
+                      )}
+                    >
+                      <module.icon className={cn("w-4 h-4 shrink-0 transition-colors", activeModule === module.id ? "text-emerald-400" : "text-slate-400 group-hover:text-slate-200")} />
+                      {isEffectiveExpanded && (
+                        <>
+                          <span className="text-[11px] leading-tight truncate flex-1 min-w-0">{module.name}</span>
+                          {isSuperAdmin && sysModule?.is_active === false && (
+                            <span className="ml-auto text-[7px] font-black bg-slate-800 text-slate-400 px-1 py-0.2 rounded uppercase border border-slate-700 shrink-0">Hidden</span>
+                          )}
+                          {isExpandableModule ? (
+                            <ChevronDown
+                              className={cn(
+                                "w-3.5 h-3.5 shrink-0 transition-transform duration-200",
+                                activeModule === module.id ? "text-emerald-400" : "text-slate-400 group-hover:text-slate-200",
+                                isModuleMenuOpen && "rotate-180"
+                              )}
+                            />
+                          ) : (
+                            activeModule === module.id && <motion.div layoutId="active-pill" className="ml-auto w-1 h-1 rounded-full bg-emerald-400 shrink-0" />
+                          )}
+                        </>
+                      )}
+                    </button>
+
+                    {/* Expandable Multi-Level Sub-Pages (HR Management & Quality Assurance) */}
+                    {isExpandableModule && isEffectiveExpanded && moduleTreePages.length > 0 && (
+                      <AnimatePresence initial={false}>
+                        {isModuleMenuOpen && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                            className="overflow-hidden"
+                          >
+                            <SidebarModuleTree
+                              pages={moduleTreePages}
+                              pathname={location.pathname}
+                              onNavigate={(targetPath) => {
+                                setActiveModule(moduleKey!);
+                                setExpandedModule(moduleKey!);
+                                navigate(targetPath);
+                              }}
+                            />
+                          </motion.div>
                         )}
-                        {activeModule === module.id && <motion.div layoutId="active-pill" className="ml-auto w-1 h-1 rounded-full bg-emerald-400 shrink-0" />}
-                      </>
+                      </AnimatePresence>
                     )}
-                  </button>
-              );
-            })}
+                  </div>
+                );
+              })}
             {groupIdx < finalGroups.length - 1 && (
               <div className={cn("pt-1 pb-0.5", isEffectiveExpanded ? "px-2" : "px-1")}>
                 <div className="h-px bg-slate-800/70 w-full" />
